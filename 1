@@ -1,0 +1,100 @@
+"import"
+t0 = List, imports:
+  Optional:
+    Field aliasName:
+      t1 = Identifier
+    "="
+  Field moduleName:
+    t1 = Identifier
+    parts ~= t1;
+    while ('.') {
+      t1 = Identifier
+      parts ~= t1;
+    }
+  Optional:
+    ":"
+    List, bindings:
+      Optional:
+        Field aliasName:
+          Identifier
+        "="
+      Field symbolName:
+        Identifier
+"module"
+Field moduleName:
+  List. parts:
+    Identifier
+
+
+
+
+import abc;
+import abc.def;
+import abc = def;
+import abc = def.ghi;
+
+
+"import" identifier ";" (parts)
+"import" identifier "." identifier ";" (parts, parts)
+"import" identifier "=" identifier ";" (aliasName, parts)
+"import" identifier "=" identifier "." identifier ";" (aliasName, parts, parts)
+
+"import" identifier ":" identifier ";" (parts, bindings.symbolName)
+"import" identifier ":" identifier "=" identifier ";" (parts, bindings.aliasName, bindings.symbolName)
+
+
+
+
+"import"
+optional(identifier "=") identifier
+("." identifier)
+optional(":" optional(identifier "=") identifier ("," optional(identifier "=") identifier))
+(
+  ","
+  optional(identifier "=")
+  identifier ("." identifier)
+  optional(":" optional(identifier "=") identifier ("," optional(identifier "=") identifier))
+)
+
+
+"import"
+t0 - aliasName
+t1 = identifier  - moduleName.parts[0]
+t2[] - moduleName.parts
+if ('=') {
+	t0 = t1;
+	t1 = identifier;
+}
+t2 ~= t1;
+while ('.') {
+	t2 ~= identifier;
+}
+
+
+
+
+
+(identifier ".") "module"
+optional(identifier "=") (identifier ".") "import"
+
+
+
+
+
+
+
+
+
+
+if "import"
+	t0 = identifier
+	if "="
+		aliasName = t0
+		t0 = identifier
+	moduleName.parts ~= t0
+	while "."
+		moduleName.parts ~= identifier
+	if ":"
+
+
+
