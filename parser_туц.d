@@ -61,41 +61,41 @@ struct Optional(args...) {
 
 class node(args...) {
 
-	static string[][string] getFields(args...)() {
+	private static string[][string] getFields(args...)() {
 		string[][string] result;
 		foreach (arg; args) getFieldsImpl(arg, result);
 		return result;
 	}
 
-	static void getFieldsImpl(T : Sequence!(args), args...)(T t, ref string[][string] result) {
+	private static void getFieldsImpl(T : Sequence!(args), args...)(T t, ref string[][string] result) {
 		foreach (arg; args) getFieldsImpl(arg, result);
 	}
 
-	static void getFieldsImpl(T : Optional!(args), args...)(T t, ref string[][string] result) {
+	private static void getFieldsImpl(T : Optional!(args), args...)(T t, ref string[][string] result) {
 		foreach (arg; args) getFieldsImpl(arg, result);
 	}
 
-	static void getFieldsImpl(T : Choice!(args), args...)(T t, ref string[][string] result) {
+	private static void getFieldsImpl(T : Choice!(args), args...)(T t, ref string[][string] result) {
 		foreach (arg; args) getFieldsImpl(arg, result);
 	}
 
-	static void getFieldsImpl(T : List!U, U : node!(args), args...)(T t, ref string[][string] result) {
+	private static void getFieldsImpl(T : List!U, U : node!(args), args...)(T t, ref string[][string] result) {
 		if (t.fieldName !in result) result[t.fieldName] = [];
 		result[t.fieldName] ~= U.stringof ~ "[]";
 	}
 
-	static void getFieldsImpl(T : Field!U, U : node!(args), args...)(T t, ref string[][string] result) {
+	private static void getFieldsImpl(T : Field!U, U : node!(args), args...)(T t, ref string[][string] result) {
 		if (t.fieldName !in result) result[t.fieldName] = [];
 		result[t.fieldName] ~= U.stringof;
 	}
 
-	static void getFieldsImpl(CharGroup t, ref string[][string] result) {
+	private static void getFieldsImpl(CharGroup t, ref string[][string] result) {
 	}
 
-	static void getFieldsImpl(string s, ref string[][string] result) {
+	private static void getFieldsImpl(string s, ref string[][string] result) {
 	}
 
-	static string generateFieldsCode() {
+	private static string generateFieldsCode() {
 		string result;
 		auto map = getFields!(args);
 		foreach (name, types; map) {
@@ -111,9 +111,10 @@ class node(args...) {
 
 auto field(T)(string fieldName) { return Field!T(fieldName); }
 auto list(T)(string fieldName, string separator) { return List!T(fieldName, separator);}
-auto dotList(T)(string fieldName) { return list!(T)(fieldName, "."); }
-auto commaList(T)(string fieldName) { return list!(T)(fieldName, ","); }
-auto optional(args...)() { return Optional!(args)(); }
+auto dotList(T)(string fieldName) { return list!T(fieldName, "."); }
+auto commaList(T)(string fieldName) { return list!T(fieldName, ","); }
+auto optional(args...)() { return Optional!args(); }
+auto choice(args...)() { return Choice!args(); }
 auto charGroup(string firstChars, string chars = firstChars)() { return CharGroup(firstChars, chars); }
 
 
@@ -136,18 +137,156 @@ class ImportBinding : node!(
 class Import : node!(
 	optional!(field!Identifier("aliasName"), "="),
 	field!ModuleName("moduleName"),
-	optional!(":", commaList!(ImportBinding)("bindings"))
+	optional!(":", commaList!ImportBinding("bindings"))
 ){};
 
 class ImportDeclaration : node!(
 	"import",
-	commaList!(Import)("imports")
+	commaList!Import("imports")
 ){};
 
 class ModuleDeclaration : node!(
 	"module",
 	field!ModuleName("moduleName")
 ){};
+
+
+class TopLevelDaclaration : node!(
+	choice!(
+		field!ImportDeclaration("importDeclaration"),
+		field!ModuleDeclaration("moduleDeclaration")
+	)
+){};
+
+
+
+
+/*
+Sequence:
+	if (cond1) {
+		action1
+		if (cond2) {
+			action2
+		}
+	}
+
+Choice:
+	if (cond1) {
+		action1
+	} else {
+		if (cond2) {
+			action2
+		}
+	}
+
+Optional:
+	if (cond1) {
+		action1
+	}
+	if (cond2) {
+		action2
+	}
+*/
+
+class ParserGenerator3 {
+	private struct Node {
+		ParserGenerator3 thenBranch;
+		ParserGenerator3 elseBranch;
+	}
+
+	private string action;  // non-null for leaves
+	private Node[string] rules;  // condition -> then and else branches
+
+
+	public string code() {
+		assert((action.length == 0) ^ (rules.length == 0));
+		if (action.length > 0) {
+			return action;
+		} else {
+			string result;
+			foreach (condition, node; rules) {
+				result ~= "if(" ~ condition ~ "){" ~ node.thenBranch.code ~ "}else{" ~ node.elseBranch.code ~ "}";
+			}
+			return result;
+		}
+	}
+
+
+	ParserGenerator3 field(string fieldName)(ParserGenerator3... sequence) {
+		return null;
+	}
+
+	ParserGenerator3 optional(ParserGenerator3... sequence) {
+		return null;
+	}
+
+	ParserGenerator3 choice(ParserGenerator3... sequence) {
+		return null;
+	}
+
+	ParserGenerator3 list(string fieldName, string separator)(ParserGenerator3... sequence) {
+		return null;
+	}
+
+	ParserGenerator3 dotList(string fieldName)(ParserGenerator3... sequence) {
+		return null;
+	}
+
+	ParserGenerator3 commaList(string fieldName)(ParserGenerator3... sequence) {
+		return null;
+	}
+
+	ParserGenerator3 charGroup(string firstChars, string chars = firstChars)() {
+		return null;
+	}
+
+
+
+
+	void add(T : node!(args), args...)() {
+		add!(Sequence!(args));
+	}
+
+	void add(T : Sequence!(args), args...)(T t, string indent) {
+		foreach (arg; args) dump(arg, indent);
+	}
+
+	void add(T : Choice!(args), args...)(T t, string indent) {
+		writeln(indent ~ "Choice:");
+		foreach (arg; args) dump(arg, indent ~ "  ");
+	}
+
+	void add(T : Optional!(args), args...)(T t, string indent) {
+		writeln(indent ~ "Optional:");
+		foreach (arg; args) dump(arg, indent ~ "  ");
+	}
+
+	void add(T : List!(node!(args)), args...)(T t, string indent) {
+		writeln(indent ~ "List" ~ t.separator ~ " " ~ t.fieldName ~ ":");
+		dump!(node!(args))(indent ~ "  ");
+	}
+
+	void add(T : Field!(node!(args)), args...)(T t, string indent) {
+		writeln(indent ~ "Field " ~ t.fieldName ~ ":");
+		dump!(node!(args))(indent ~ "  ");
+	}
+
+	void add(CharGroup t, string indent) {
+		writeln(indent ~ "Identifier");
+	}
+
+	void add(string s, string indent) {
+		writeln(indent ~ "\"" ~ s ~ "\"");
+	}
+
+
+}
+
+
+
+
+
+
 
 
 
@@ -518,8 +657,7 @@ unittest {
 	//writeln(ParserGenerator().add!ImportDeclaration);
 	//writeln(generateParser!(ImportDeclaration)("", 0, ParserGenerator()).code);
 
-	dump!ImportDeclaration;
-	dump!ModuleDeclaration;
+	dump!TopLevelDaclaration;
 	//writeln(generateCode!ImportDeclaration);
 	//writeln(Identifier.generateFieldsCode);
 	//writeln(ModuleName.generateFieldsCode);
@@ -773,7 +911,7 @@ class ParserGeneratorToken {
 
 
 
-
+/*
 
 class ModuleName : node!(
 	dotList!Identifier("parts")
@@ -799,3 +937,4 @@ class ModuleDeclaration : node!(
 	"module",
 	field!ModuleName("moduleName")
 ){};
+*/
