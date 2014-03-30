@@ -187,6 +187,8 @@ Optional:
 		action2
 	}
 */
+// Храним информацию о полях и временных переменных в листах
+// После построения дерева пытаемся протолкнуть их вверх
 
 class ParserGenerator3 {
 	private struct Node {
@@ -194,7 +196,13 @@ class ParserGenerator3 {
 		ParserGenerator3 elseBranch;
 	}
 
+	private struct VariableData {
+		string tempName;
+		string realName;
+	}
+
 	private string action;  // non-null for leaves
+	private VariableData[] variables;
 	private Node[string] rules;  // condition -> then and else branches
 
 
@@ -212,74 +220,40 @@ class ParserGenerator3 {
 	}
 
 
-	ParserGenerator3 field(string fieldName)(ParserGenerator3... sequence) {
+	ParserGenerator3 field(string fieldName)(ParserGenerator3[] sequence...) {
 		return null;
 	}
 
-	ParserGenerator3 optional(ParserGenerator3... sequence) {
+	ParserGenerator3 optional(ParserGenerator3[] sequence...) {
 		return null;
 	}
 
-	ParserGenerator3 choice(ParserGenerator3... sequence) {
+	ParserGenerator3 sequence(ParserGenerator3[] items...) {
+		ParserGenerator3 subPG = sequence(items[1..$]);
 		return null;
 	}
 
-	ParserGenerator3 list(string fieldName, string separator)(ParserGenerator3... sequence) {
+	ParserGenerator3 choice(ParserGenerator3[] variants...) {
+		ParserGenerator3 result = new ParserGenerator3();
+		foreach (variant; variants) result.add(variant);
+		return result;
+	}
+
+	ParserGenerator3 list(string fieldName, string separator)(ParserGenerator3[] sequence...) {
 		return null;
 	}
 
-	ParserGenerator3 dotList(string fieldName)(ParserGenerator3... sequence) {
+	ParserGenerator3 dotList(string fieldName)(ParserGenerator3[] sequence...) {
+		return list!(fieldName, ".")(sequence);
+	}
+
+	ParserGenerator3 commaList(string fieldName)(ParserGenerator3[] sequence...) {
+		return list!(fieldName, ",")(sequence);
+	}
+
+	ParserGenerator3 identifier() {
 		return null;
 	}
-
-	ParserGenerator3 commaList(string fieldName)(ParserGenerator3... sequence) {
-		return null;
-	}
-
-	ParserGenerator3 charGroup(string firstChars, string chars = firstChars)() {
-		return null;
-	}
-
-
-
-
-	void add(T : node!(args), args...)() {
-		add!(Sequence!(args));
-	}
-
-	void add(T : Sequence!(args), args...)(T t, string indent) {
-		foreach (arg; args) dump(arg, indent);
-	}
-
-	void add(T : Choice!(args), args...)(T t, string indent) {
-		writeln(indent ~ "Choice:");
-		foreach (arg; args) dump(arg, indent ~ "  ");
-	}
-
-	void add(T : Optional!(args), args...)(T t, string indent) {
-		writeln(indent ~ "Optional:");
-		foreach (arg; args) dump(arg, indent ~ "  ");
-	}
-
-	void add(T : List!(node!(args)), args...)(T t, string indent) {
-		writeln(indent ~ "List" ~ t.separator ~ " " ~ t.fieldName ~ ":");
-		dump!(node!(args))(indent ~ "  ");
-	}
-
-	void add(T : Field!(node!(args)), args...)(T t, string indent) {
-		writeln(indent ~ "Field " ~ t.fieldName ~ ":");
-		dump!(node!(args))(indent ~ "  ");
-	}
-
-	void add(CharGroup t, string indent) {
-		writeln(indent ~ "Identifier");
-	}
-
-	void add(string s, string indent) {
-		writeln(indent ~ "\"" ~ s ~ "\"");
-	}
-
-
 }
 
 
