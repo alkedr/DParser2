@@ -142,12 +142,14 @@ class Import : node!(
 
 class ImportDeclaration : node!(
 	"import",
-	commaList!Import("imports")
+	commaList!Import("imports"),
+	";"
 ){};
 
 class ModuleDeclaration : node!(
 	"module",
-	field!ModuleName("moduleName")
+	field!ModuleName("moduleName"),
+	";"
 ){};
 
 
