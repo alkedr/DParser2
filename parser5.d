@@ -5,7 +5,7 @@ import std.conv;
 import std.string;
 import std.array;
 
-
+/*
 class Parser {
 	public abstract string code(string storage, string innerCode) const;
 	public abstract bool isCompatible(const(Parser) other) const;
@@ -39,7 +39,8 @@ class CharParser : Parser {
 	}
 
 	public override bool isCompatible(const(Parser) otherParser) const {
-		return (cast(const(CharParser))otherParser !is null) && ((cast(const(CharParser))otherParser).c == c);
+		auto other = cast(const(CharParser))otherParser;
+		return (other !is null) && (other.c == c);
 	}
 }
 
@@ -56,6 +57,7 @@ class TokenEndParser : Parser {
 
 class Node {
 	public int tmpVarIndex;
+	public string fieldType;
 	public string fieldName;
 	public Node prev;
 	public Node next;
@@ -139,19 +141,337 @@ class ChoiceNode : ComplexNode {
 }
 
 
+*/
 
 
 
 
 
+class AbstractNode {
+	public string fieldType;
+	public string fieldName;
+	public int tmpVarIndex = -1;
+	public AbstractNode prev;  // FIXME: do we need it?
+	public AbstractNode next;
+
+	protected abstract const(AbstractNode)[] peek() const;
+	protected abstract void pop(const(AbstractNode) node, int tmpVarIndex);
+
+	public abstract void transform();
+
+	protected abstract bool sameAs(AbstractNode other) const;
+
+	public abstract string generateCode() const;
+}
+
+
+class SimpleNode : AbstractNode {
+	bool popped = false;
+
+	protected override const(AbstractNode)[] peek() const {
+		return popped ? (next ? next.peek : []) : [this];
+	}
+
+	protected override void pop(const(AbstractNode) node, int tmpVarIndex) {
+		if (popped && next) {
+			next.pop(node, tmpVarIndex);
+		} else {
+			popped = true;
+			this.tmpVarIndex = tmpVarIndex;
+		}
+	}
+
+	public override void transform() {
+		if (next) next.transform();
+	}
+}
+
+class StartTokenNode : SimpleNode {
+	protected override bool sameAs(AbstractNode other) const {
+		return (cast(StartTokenNode)other !is null);
+	}
+
+	public override string generateCode() const {
+		return "";
+	}
+}
+
+class CharNode : SimpleNode {
+	public dchar c;
+
+	this(dchar c) {
+		this.c = c;
+	}
+
+	protected override bool sameAs(AbstractNode otherNode) const {
+		auto other = cast(CharNode)otherNode;
+		return (other !is null) && (other.c == c);
+	}
+
+	public override string generateCode() const {
+		return "";
+	}
+}
+
+class EndTokenNode : SimpleNode {
+	protected override bool sameAs(AbstractNode other) const {
+		return (cast(EndTokenNode)other !is null);
+	}
+
+	public override string generateCode() const {
+		return "";
+	}
+}
+
+class IdentifierNode : SimpleNode {
+	protected override bool sameAs(AbstractNode other) const {
+		return (cast(IdentifierNode)other !is null);
+	}
+
+	public override string generateCode() const {
+		return "";
+	}
+}
+
+
+class ComplexNode : AbstractNode {
+	protected abstract inout(AbstractNode)[] choices() inout;
+
+	public override const(AbstractNode)[] peek() const {
+		return join(map!((const AbstractNode choice) => choice.peek)(choices));
+	}
+
+	public override void pop(const(AbstractNode) node, int tmpVarIndex) {
+		foreach (choice; choices) choice.pop(node, tmpVarIndex);
+	}
+
+	public override void transform() {
+		if (next) next.transform();
+		// TODO peek & pop choices
+	}
+}
+
+class ListNode : ComplexNode {
+	public string separator;
+	public AbstractNode contents;
+
+	public override string generateCode() const {
+		return "";
+	}
+
+	protected override inout(AbstractNode)[] choices() inout {
+		return contents ? [ contents ] : [];
+	}
+
+	protected override bool sameAs(AbstractNode other) const { return false; }
+}
+
+class OptionalNode : ComplexNode {
+	public AbstractNode contents;
+
+	public override string generateCode() const {
+		return "";
+	}
+
+	public override inout(AbstractNode)[] choices() inout {
+		return (contents ? [ contents ] : []) ~ (next ? [ next ] : []);
+	}
+
+	protected override bool sameAs(AbstractNode other) const { return false; }
+}
+
+class ChoiceNode : ComplexNode {
+	public AbstractNode[] _choices;
+
+	public override string generateCode() const {
+		return "";
+	}
+
+	public override inout(AbstractNode)[] choices() inout {
+		return _choices;
+	}
+
+	protected override bool sameAs(AbstractNode other) const { return false; }
+}
+
+
+class ASTNode(alias node) {
+}
+
+
+struct Keyword { string keyword; }
+struct identifier { string fieldName; }
+struct field(T : ASTNode!(args), args...) { string fieldName; }
+struct list(T : ASTNode!(args), args...) { string fieldName, separator; }
+struct Sequence(args...) { args a; }
+struct Choice(args...) { args a; }
+struct Optional(args...) { args a; }
+
+auto keyword(string s)() { return Keyword(s); }
+auto dotList(T : ASTNode!(nodes), nodes...)(string fieldName) {
+	return list!T(fieldName, ".");
+}
+auto commaList(T : ASTNode!(nodes), nodes...)(string fieldName) {
+	return list!T(fieldName, ",");
+}
+auto sequence(A...)(A a) { return Sequence!A(a); }
+auto choice(A...)(A a) { return Choice!A(a); }
+auto optional(A...)(A a) { return Optional!A(a); }
+
+
+//unittest {
+//	class TestASTNode : ASTNode!(identifier("test")) {}
+//	writeln(keyword!"qwe"());
+//	writeln(identifier("qwe"));
+//	writeln(field!TestASTNode("qwe"));
+//	writeln(dotList!TestASTNode("qwe"));
+//	writeln(commaList!TestASTNode("qwe"));
+//	writeln(sequence(keyword!"a", keyword!"b"));
+//	writeln(choice(keyword!"a", keyword!"b"));
+//	writeln(optional(keyword!"a"));
+//}
+
+
+
+AbstractNode sequenceOfParserNodes(AbstractNode[] nodes...) {
+	// TODO учитывать choice
+	if (nodes.length == 0) return null;
+	for (int i = 1; i < nodes.length; i++) {
+		AbstractNode end = nodes[i-1];
+		while (end.next) end = end.next;
+		end.next = nodes[i];
+		nodes[i].prev = end;
+	}
+	return nodes[0];
+}
+
+AbstractNode createParserNodes(T : ASTNode!(nodes), nodes...)() {
+	return createParserNodes(sequence(nodes));
+}
+
+AbstractNode createParserNodes(Keyword keyword) {
+	AbstractNode[] array = [ new StartTokenNode ];
+	array ~= map!(c => new CharNode(c))(keyword.keyword).array;
+	array ~= new EndTokenNode;
+	array[array.length-1].fieldType = "Token";
+	array[array.length-1].fieldName = keyword.keyword ~ "Keyword";
+	return sequenceOfParserNodes(array);
+}
+
+AbstractNode createParserNodes(identifier iden) {
+	auto result = new IdentifierNode;
+	result.fieldType = "Identifier";
+	result.fieldName = iden.fieldName;
+	return result;
+}
+
+AbstractNode createParserNodes(T : ASTNode!(args), args...)(field!T f) {
+	auto result = createParserNodes(sequence(args));
+	//result.fieldType = "Identifier";
+	//result.fieldName = iden.fieldName;
+	return result;
+}
+
+AbstractNode createParserNodes(T : ASTNode!(args), args...)(list!T l) {
+	auto result = new ListNode;
+	result.fieldType = T.stringof ~ "[]";
+	result.fieldName = l.fieldName;
+	result.separator = l.separator;
+	result.contents = createParserNodes(sequence(args));
+	return result;
+}
+
+AbstractNode createParserNodes(Args...)(Sequence!Args seq) {
+	static if (seq.a.length == 0) return null; else
+	static if (seq.a.length == 1) return createParserNodes(seq.a[0]); else
+	return sequenceOfParserNodes(
+		createParserNodes(seq.a[0]),
+		createParserNodes(sequence(seq.a[1..$]))
+	);
+}
+
+AbstractNode createParserNodes(Args...)(Choice!Args ch) {
+	auto result = new ChoiceNode;
+	foreach (x; ch.a) {
+		result._choices ~= createParserNodes(x);
+	}
+	return result;
+}
+
+AbstractNode createParserNodes(Args...)(Optional!Args opt) {
+	auto result = new OptionalNode;
+	result.contents = createParserNodes(sequence(opt.a));
+	return result;
+}
+
+
+
+void writelnNode(AbstractNode n, string indent = "") {
+	if (n) {
+		write(indent);
+		if (n.fieldName.length > 0) write(n.fieldType, " ", n.fieldName, " = ");
+		if (n.tmpVarIndex >= 0) write("tmp", n.tmpVarIndex, " = ");
+		write(n.classinfo.name, " ");
+		if (auto cn = cast(CharNode)n) write("c = ", cn.c);
+		if (auto cn = cast(ListNode)n) {
+			writeln("sep = ", cn.separator);
+			writelnNode(cn.contents, indent ~ "  ");
+		}
+		if (auto cn = cast(ChoiceNode)n) {
+			writeln(indent, "_choices:");
+			foreach (c; cn._choices) {
+				writelnNode(c, indent ~ "  ");
+				writeln();
+			}
+		}
+		if (auto cn = cast(OptionalNode)n) {
+			writeln(indent, "contents:");
+			writelnNode(cn.contents, indent ~ "  ");
+		}
+
+		writeln();
+		if (n.next) writelnNode(n.next, indent);
+	}
+}
+
+
+unittest {
+	//class TestASTNode : ASTNode!(identifier("test")) {}
+	//writelnNode(createParserNodes(keyword!"qwe"()));
+	//writeln();
+	//writelnNode(createParserNodes(identifier("qwe")));
+	//writeln();
+	//writelnNode(createParserNodes(field!TestASTNode("qwe")));
+	//writeln();
+	//writelnNode(createParserNodes(dotList!TestASTNode("qwe")));
+	//writeln();
+	//writelnNode(createParserNodes(commaList!TestASTNode("qwe")));
+	//writeln();
+	//writelnNode(createParserNodes(sequence(keyword!"a", keyword!"b")));
+	//writeln();
+	//writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")));
+	//writeln();
+	//writelnNode(createParserNodes(optional(keyword!"a")));
+}
+
+
+
+
+
+
+
+
+/+
 // FIXME: handle or at least detect choice of optionals
-/*
+
 struct Node {
 	enum Type {
-		START_KEYWORD,
-		KEYWORD_CHAR,
-		END_KEYWORD,
+		START_TOKEN,
+		CHAR,
+		END_TOKEN,
 		IDENTIFIER,
+
+		POPPED,
 		LIST,
 		OPTIONAL,
 		CHOICE,
@@ -161,11 +481,11 @@ struct Node {
 	public Type type;
 	public string fieldType;
 	public string fieldName;
+	public int tmpVarIndex = -1;
 	public Node* prev;
 	public Node* next;
-	public Node* popped;
 
-	// for START_KEYWORD, KEYWORD_CHAR, END_KEYWORD
+	// for START_TOKEN, CHAR, END_TOKEN
 	public string keyword;
 	// for KEYWORD_CHAR
 	public char c;
@@ -174,53 +494,212 @@ struct Node {
 	public char separator;
 
 	// for LIST and OPTIONAL
-	public Node* content;
+	public Node* contents;
 
 	// for CHOICE
-	public Node[] choices;
+	public Node*[] _choices;
 
 
-	private const(Node)[] peek() const {
-		switch (type) {
-			case Type.LIST    : return [ *content ];
-			case Type.OPTIONAL: return [ *content, *next ];
-			case Type.CHOICE  : return choices;
-			default: return [ this ];
+	private inout(Node*)[] choices() inout {
+		final switch (type) {
+			case Type.POPPED  : return next ? next.choices() : [];
+			case Type.LIST    : return [ contents ];
+			case Type.OPTIONAL: return [ contents, next ];
+			case Type.CHOICE  : return _choices;
+			case Type.START_TOKEN:
+			case Type.CHAR:
+			case Type.END_TOKEN:
+			case Type.IDENTIFIER:
+				return [ &this ];
 		}
 	}
 
-	public void pop(Node node) {
-		if (type == Type.LIST    ) {
-
-		} else
-		if (type == Type.OPTIONAL) return [ content, next ];
-		if (type == Type.CHOICE  ) return choices;
-		assert(node == this);
-		if (prev !is null) {
-			prevChoice.choices = replace(prevChoice.choices, [this], [next]);
-			prevChoice.choices = remove!((Node n) => n == null)(prevChoice.choices);
-			if (prevOptional.content == this) prevOptional.content = next;
-			if (prev.next == this) prev.next = next;
+	public void pop(const(Node*) node, int tmpVarIndex) {
+		final switch (type) {
+			case Type.POPPED  :
+			case Type.LIST    :
+			case Type.OPTIONAL:
+			case Type.CHOICE  :
+				foreach (n; choices) n.pop(node, tmpVarIndex);
+				break;
+			case Type.START_TOKEN:
+			case Type.CHAR:
+			case Type.END_TOKEN:
+			case Type.IDENTIFIER:
+				type = Type.POPPED;
+				this.tmpVarIndex = tmpVarIndex;
 		}
-		if (next !is null) next.prev = prev;
+
+
+
+
+		//if (type == Type.LIST    ) {
+
+		//} else
+		//if (type == Type.OPTIONAL) return [ contents, next ];
+		//if (type == Type.CHOICE  ) return choices;
+		//assert(node == this);
+		//if (prev !is null) {
+		//	prevChoice.choices = replace(prevChoice.choices, [this], [next]);
+		//	prevChoice.choices = remove!((Node n) => n == null)(prevChoice.choices);
+		//	if (prevOptional.contents == this) prevOptional.contents = next;
+		//	if (prev.next == this) prev.next = next;
+		//}
+		//if (next !is null) next.prev = prev;
 	}
 
-	public void transform() {
-		next.transform();
-		const(Node)[] peekResult = peek();
-		if (peekResult.length > 1) {
-			// TODO: pop
-		}
+	public void transform(int tmpVarIndex = 0) {
+		if (next) next.transform(tmpVarIndex);
+		//const(Node)[] peekResult = peek();
+		//if (peekResult.length > 1) {
+		//	// TODO: pop
+		//}
 	}
-}*/
+}
+
+
+class ASTNode(alias node) {
+}
+
+
+Node* sequence(Node*[] nodes...) {
+	nodes[0].prev = null;
+	nodes[nodes.length-1].next = null;
+	for (int i = 1; i < nodes.length; i++) {
+		nodes[i-1].next = nodes[i];
+		nodes[i].prev = nodes[i-1];
+	}
+	return nodes[0];
+}
+
+Node* field(T : ASTNode!(nodes), nodes...)(string fieldName) {
+	auto result = sequence(nodes);
+	result.fieldType = T.stringof;
+	result.fieldName = fieldName;
+	return result;
+}
+
+Node* list(T : ASTNode!(nodes), nodes...)(string fieldName, string separator) {
+	auto result = Node();
+	result.type = Node.Type.LIST;
+	result.fieldType = T.stringof ~ "[]";
+	result.fieldName = fieldName;
+	result.separator = separator;
+	result.contents = sequence(nodes);
+	return result;
+}
+
+Node* dotList(T : ASTNode!(nodes), nodes...)(string fieldName) {
+	return list!T(fieldName, ".");
+}
+
+Node* commaList(T : ASTNode!(nodes), nodes...)(string fieldName) {
+	return list!T(fieldName, ",");
+}
+
+Node* optional(Node*[] nodes...) {
+	auto result = new Node();
+	result.type = Node.Type.OPTIONAL;
+	result.contents = sequence(nodes);
+	return result;
+}
+
+Node* choice(Node*[] nodes...) {
+	auto result = new Node();
+	result.type = Node.Type.CHOICE;
+	result._choices = nodes;
+	return result;
+}
+
+Node* startToken() {
+	auto result = new Node();
+	result.type = Node.Type.START_TOKEN;
+	return result;
+}
+
+Node* endToken(string s) {
+	auto result = new Node();
+	result.type = Node.Type.END_TOKEN;
+	result.fieldType = "Token";
+	result.fieldName = s ~ "Keyword";
+	return result;
+}
+
+Node*[] chars(string s) {
+	Node*[] result;
+	foreach (c; s) {
+		auto n = new Node;
+		n.type = Node.Type.CHAR;
+		n.c = c;
+		result ~= n;
+	}
+	return result;
+}
+
+Node* keyword(string keyword) {
+	return sequence(startToken() ~ chars(keyword) ~ endToken(keyword));
+}
 
 
 
+void writelnNode(Node n) {
+	writelnNode(&n);
+}
+
+void writelnNode(Node* n, string indent = "") {
+	if (n) {
+		if (n.fieldName.length > 0) write(indent, n.fieldType, " ", n.fieldName, " = ");
+		if (n.tmpVarIndex >= 0) write(indent, "tmp", n.tmpVarIndex, " = ");
+		write(indent, n.type, " ");
+		if (n.keyword.length > 0) write(indent, "keyword = ", n.keyword, " ");
+		if (n.c < 255) write(indent, "c = ", n.c, " ");
+		if (n.separator < 255) write(indent, "separator = ", n.separator, " ");
+		if (n.contents) {
+			writeln(indent, "contents:");
+			writelnNode(n.contents, indent ~ "  ");
+		}
+		if (n._choices.length > 0) {
+			writeln(indent, "_choices:");
+			foreach (c; n._choices) {
+				writelnNode(c, indent ~ "  ");
+				writeln();
+			}
+		}
+
+		writeln();
+		if (n.next) writelnNode(n.next, indent);
+	}
+}
+
+
+Node f(Node*n) {return *n;}
+
+
+//class TestNode : ASTNode!(*sequence(startToken(), endToken(""))) {
+
+//}
 
 
 
+unittest {
+	//auto n = keyword("import");
+	//writelnNode(n);
+
+	//auto n2 = optional(choice(keyword("import"), keyword("immutable")));
+	//writelnNode(n2);
+
+	//auto n2 = commaList(choice(keyword("import"), keyword("immutable")));
+	//writelnNode(n2);
+
+	//n2 = dotList!TestNode("testField");
+	//writelnNode(n2);
+
+	//writelnNode(ASTNode!(Node()));
+}
 
 
+
++/
 
 
 
