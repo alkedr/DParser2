@@ -5,6 +5,23 @@ import std.conv;
 import std.string;
 import std.array;
 
+
+
+// TODO: НОДА MERGE!!!!!!
+
+
+// FIXME: handle or at least detect choice of optionals
+// FIXME: handle or at least detect sequence(list(contents, sep), sep)
+// FIXME: detect choice(list(A, sep), list(A, sep))
+// TODO: choice тоже может сходиться, как и optional
+
+
+
+
+
+
+
+
 /*
 class Parser {
 	public abstract string code(string storage, string innerCode) const;
@@ -151,18 +168,73 @@ class AbstractNode {
 	public string fieldType;
 	public string fieldName;
 	public int tmpVarIndex = -1;
-	public AbstractNode prev;  // FIXME: do we need it?
+	public AbstractNode prev;
 	public AbstractNode next;
 
 	protected abstract const(AbstractNode)[] peek() const;
 	protected abstract void pop(const(AbstractNode) node, int tmpVarIndex);
 
-	public abstract void transform();
+	public abstract AbstractNode transform();
 
-	protected abstract bool sameAs(AbstractNode other) const;
+	protected bool sameAs(const(AbstractNode) other) const {
+		return this.classinfo == other.classinfo;
+	}
 
 	public abstract string generateCode() const;
+
+	protected abstract AbstractNode dup();
+
+	protected T dupHelper(T)() {
+		auto result = new T;
+		result.fieldType = fieldType;
+		result.fieldName = fieldName;
+		result.tmpVarIndex = tmpVarIndex;
+		result.prev = prev;
+		result.next = next;
+		return result;
+	}
 }
+
+
+class MergeNode : AbstractNode {
+	public AbstractNode[] lastNodesOfBranches;
+
+	protected override const(AbstractNode)[] peek() const {
+		return next ? next.peek : [];
+	}
+
+	protected override void pop(const(AbstractNode) nodeToPop, int tmpVarIndex) {
+		if (next /*&& next.peek contains nodeToPop*/) {
+			next.pop(nodeToPop, tmpVarIndex);  // обновляет next
+			// копируем next для каждой ветки
+			foreach (lastNodeOfBranch; lastNodesOfBranches) {
+				AbstractNode n = next.dup();
+				n.prev = lastNodeOfBranch;
+				n.next = this;
+			}
+			// удаляем next
+			next = next.next;
+			next.prev = this;
+		}
+	}
+
+	public override AbstractNode transform() {
+		if (next) next.transform();
+		return this;
+	}
+
+	public override string generateCode() const {
+		return "";
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!MergeNode;
+		result.lastNodesOfBranches = lastNodesOfBranches;
+		return result;
+	}
+}
+
+
 
 
 class SimpleNode : AbstractNode {
@@ -181,55 +253,70 @@ class SimpleNode : AbstractNode {
 		}
 	}
 
-	public override void transform() {
+	public override AbstractNode transform() {
 		if (next) next.transform();
+		return this;
 	}
 }
 
 class StartTokenNode : SimpleNode {
-	protected override bool sameAs(AbstractNode other) const {
-		return (cast(StartTokenNode)other !is null);
-	}
-
 	public override string generateCode() const {
 		return "";
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!StartTokenNode;
+		result.popped = popped;
+		return result;
 	}
 }
 
 class CharNode : SimpleNode {
 	public dchar c;
 
+	this() {}
+
 	this(dchar c) {
 		this.c = c;
 	}
 
-	protected override bool sameAs(AbstractNode otherNode) const {
-		auto other = cast(CharNode)otherNode;
-		return (other !is null) && (other.c == c);
+	protected override bool sameAs(const(AbstractNode) other) const {
+		return super.sameAs(other) && ((cast(CharNode)other).c == c);
 	}
 
 	public override string generateCode() const {
 		return "";
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!CharNode;
+		result.popped = popped;
+		result.c = c;
+		return result;
 	}
 }
 
 class EndTokenNode : SimpleNode {
-	protected override bool sameAs(AbstractNode other) const {
-		return (cast(EndTokenNode)other !is null);
-	}
-
 	public override string generateCode() const {
 		return "";
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!EndTokenNode;
+		result.popped = popped;
+		return result;
 	}
 }
 
 class IdentifierNode : SimpleNode {
-	protected override bool sameAs(AbstractNode other) const {
-		return (cast(IdentifierNode)other !is null);
-	}
-
 	public override string generateCode() const {
 		return "";
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!IdentifierNode;
+		result.popped = popped;
+		return result;
 	}
 }
 
@@ -238,22 +325,14 @@ class ComplexNode : AbstractNode {
 	protected abstract inout(AbstractNode)[] choices() inout;
 
 	public override const(AbstractNode)[] peek() const {
-		return join(map!((const AbstractNode choice) => choice.peek)(choices));
-	}
-
-	public override void pop(const(AbstractNode) node, int tmpVarIndex) {
-		foreach (choice; choices) choice.pop(node, tmpVarIndex);
-	}
-
-	public override void transform() {
-		if (next) next.transform();
-		// TODO peek & pop choices
+		return join(map!(choice => choice ? choice.peek : [])(choices));
 	}
 }
 
 class ListNode : ComplexNode {
 	public string separator;
 	public AbstractNode contents;
+	public bool isDoWhile = true;
 
 	public override string generateCode() const {
 		return "";
@@ -263,7 +342,27 @@ class ListNode : ComplexNode {
 		return contents ? [ contents ] : [];
 	}
 
-	protected override bool sameAs(AbstractNode other) const { return false; }
+	public override void pop(const(AbstractNode) node, int tmpVarIndex) {
+		if (contents.sameAs(node)) {
+			// TODO: copy content
+			// listDoWhile(content, sep) => content, listWhile(content, sep)
+			// listWhile(content, sep) => sep, content, listWhile(content, sep)
+		}
+	}
+
+	public override AbstractNode transform() {
+		if (next) next.transform();
+		if (contents) contents.transform();
+		return this;
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!ListNode;
+		result.separator = separator;
+		result.contents = contents;
+		result.isDoWhile = isDoWhile;
+		return result;
+	}
 }
 
 class OptionalNode : ComplexNode {
@@ -277,7 +376,21 @@ class OptionalNode : ComplexNode {
 		return (contents ? [ contents ] : []) ~ (next ? [ next ] : []);
 	}
 
-	protected override bool sameAs(AbstractNode other) const { return false; }
+	public override void pop(const(AbstractNode) node, int tmpVarIndex) {
+		// TODO: opt(A), B => choice(AB, B)
+	}
+
+	public override AbstractNode transform() {
+		if (next) next.transform();
+		// TODO peek & pop choices
+		return this;
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!OptionalNode;
+		result.contents = contents;
+		return result;
+	}
 }
 
 class ChoiceNode : ComplexNode {
@@ -291,7 +404,21 @@ class ChoiceNode : ComplexNode {
 		return _choices;
 	}
 
-	protected override bool sameAs(AbstractNode other) const { return false; }
+	public override void pop(const(AbstractNode) node, int tmpVarIndex) {
+	}
+
+	public override AbstractNode transform() {
+		if (next) next.transform();
+		// TODO peek & pop choices
+		//
+		return this;
+	}
+
+	protected override AbstractNode dup() {
+		auto result = dupHelper!ChoiceNode;
+		result._choices = _choices;
+		return result;
+	}
 }
 
 
@@ -392,15 +519,29 @@ AbstractNode createParserNodes(Args...)(Sequence!Args seq) {
 
 AbstractNode createParserNodes(Args...)(Choice!Args ch) {
 	auto result = new ChoiceNode;
+	auto merge = new MergeNode;
 	foreach (x; ch.a) {
-		result._choices ~= createParserNodes(x);
+		result._choices ~= sequenceOfParserNodes(createParserNodes(x), merge);
+		AbstractNode end = result._choices[result._choices.length-1];
+		while (end.next && end.next.next) end = end.next;
+		merge.lastNodesOfBranches ~= end;
 	}
+	result.next = merge;
+	merge.prev = result;
 	return result;
 }
 
 AbstractNode createParserNodes(Args...)(Optional!Args opt) {
-	auto result = new OptionalNode;
-	result.contents = createParserNodes(sequence(opt.a));
+	auto result = new ChoiceNode;
+	auto merge = new MergeNode;
+	result._choices ~= merge;
+	result._choices ~= sequenceOfParserNodes(createParserNodes(sequence(opt.a)), merge);
+	AbstractNode end = result._choices[result._choices.length-1];
+	while (end.next && end.next.next) end = end.next;
+	result.next = merge;
+	merge.prev = result;
+	merge.lastNodesOfBranches ~= result;
+	merge.lastNodesOfBranches ~= end;
 	return result;
 }
 
@@ -428,6 +569,12 @@ void writelnNode(AbstractNode n, string indent = "") {
 			writeln(indent, "contents:");
 			writelnNode(cn.contents, indent ~ "  ");
 		}
+		if (auto cn = cast(MergeNode)n) {
+			writeln(cn.lastNodesOfBranches.length, " branches");
+			foreach (c; cn.lastNodesOfBranches) {
+				writeln(c.classinfo.name);
+			}
+		}
 
 		writeln();
 		if (n.next) writelnNode(n.next, indent);
@@ -436,7 +583,7 @@ void writelnNode(AbstractNode n, string indent = "") {
 
 
 unittest {
-	//class TestASTNode : ASTNode!(identifier("test")) {}
+	class TestASTNode : ASTNode!(identifier("test")) {}
 	//writelnNode(createParserNodes(keyword!"qwe"()));
 	//writeln();
 	//writelnNode(createParserNodes(identifier("qwe")));
@@ -449,9 +596,30 @@ unittest {
 	//writeln();
 	//writelnNode(createParserNodes(sequence(keyword!"a", keyword!"b")));
 	//writeln();
-	//writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")));
+	writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")));
+	writeln();
+	writelnNode(createParserNodes(optional(keyword!"a")));
+}
+
+
+
+unittest {
+	//class TestASTNode : ASTNode!(identifier("test")) {}
+	//writelnNode(createParserNodes(keyword!"qwe").transform);
 	//writeln();
-	//writelnNode(createParserNodes(optional(keyword!"a")));
+	//writelnNode(createParserNodes(identifier("qwe")).transform);
+	//writeln();
+	//writelnNode(createParserNodes(field!TestASTNode("qwe")).transform);
+	//writeln();
+	//writelnNode(createParserNodes(dotList!TestASTNode("qwe")).transform);
+	//writeln();
+	//writelnNode(createParserNodes(commaList!TestASTNode("qwe")).transform);
+	//writeln();
+	//writelnNode(createParserNodes(sequence(keyword!"a", keyword!"b")).transform);
+	//writeln();
+	//writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")).transform);
+	//writeln();
+	//writelnNode(createParserNodes(optional(keyword!"a")).transform);
 }
 
 
@@ -461,8 +629,18 @@ unittest {
 
 
 
+
+
+
+
+
+
+
+
+
+
+
 /+
-// FIXME: handle or at least detect choice of optionals
 
 struct Node {
 	enum Type {
