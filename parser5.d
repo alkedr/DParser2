@@ -9,6 +9,8 @@ import std.array;
 
 // TODO: НОДА MERGE!!!!!!
 
+// TODO: pop() возвращает ноду, которую нужно вставить перед нодой, для которой вызвали pop
+
 
 // FIXME: handle or at least detect choice of optionals
 // FIXME: handle or at least detect sequence(list(contents, sep), sep)
@@ -163,6 +165,27 @@ class ChoiceNode : ComplexNode {
 
 
 
+T shallowCopyImpl(T)(T original) {
+	auto result = new T;
+	result.tupleof = original.tupleof;
+	return result;
+}
+
+AbstractNode shallowCopy(AbstractNode original) {
+	if (cast(AllocateASTNodeNode)original) return shallowCopyImpl(cast(AllocateASTNodeNode)original);
+	if (cast(MergeNode)original) return shallowCopyImpl(cast(MergeNode)original);
+	if (cast(EmptyNode)original) return shallowCopyImpl(cast(EmptyNode)original);
+	if (cast(StartTokenNode)original) return shallowCopyImpl(cast(StartTokenNode)original);
+	if (cast(CharNode)original) return shallowCopyImpl(cast(CharNode)original);
+	if (cast(EndTokenNode)original) return shallowCopyImpl(cast(EndTokenNode)original);
+	if (cast(IdentifierNode)original) return shallowCopyImpl(cast(IdentifierNode)original);
+	if (cast(ListNode)original) return shallowCopyImpl(cast(ListNode)original);
+	if (cast(OptionalNode)original) return shallowCopyImpl(cast(OptionalNode)original);
+	if (cast(ChoiceNode)original) return shallowCopyImpl(cast(ChoiceNode)original);
+	assert(0);
+}
+
+
 
 class AbstractNode {
 	public string fieldType;
@@ -181,17 +204,12 @@ class AbstractNode {
 	}
 
 	public abstract string generateCode() const;
+}
 
-	protected abstract AbstractNode dup();
 
-	protected T dupHelper(T)() {
-		auto result = new T;
-		result.fieldType = fieldType;
-		result.fieldName = fieldName;
-		result.tmpVarIndex = tmpVarIndex;
-		result.prev = prev;
-		result.next = next;
-		return result;
+class AllocateASTNodeNode : SimpleNode {
+	public override string generateCode() const {
+		return format("%s = new %s;", fieldName, fieldType);
 	}
 }
 
@@ -208,7 +226,7 @@ class MergeNode : AbstractNode {
 			next.pop(nodeToPop, tmpVarIndex);  // обновляет next
 			// копируем next для каждой ветки
 			foreach (lastNodeOfBranch; lastNodesOfBranches) {
-				AbstractNode n = next.dup();
+				AbstractNode n = next.shallowCopy();
 				n.prev = lastNodeOfBranch;
 				n.next = this;
 			}
@@ -225,12 +243,6 @@ class MergeNode : AbstractNode {
 
 	public override string generateCode() const {
 		return "";
-	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!MergeNode;
-		result.lastNodesOfBranches = lastNodesOfBranches;
-		return result;
 	}
 }
 
@@ -259,15 +271,15 @@ class SimpleNode : AbstractNode {
 	}
 }
 
-class StartTokenNode : SimpleNode {
+class EmptyNode : SimpleNode {
 	public override string generateCode() const {
 		return "";
 	}
+}
 
-	protected override AbstractNode dup() {
-		auto result = dupHelper!StartTokenNode;
-		result.popped = popped;
-		return result;
+class StartTokenNode : SimpleNode {
+	public override string generateCode() const {
+		return "";
 	}
 }
 
@@ -287,36 +299,17 @@ class CharNode : SimpleNode {
 	public override string generateCode() const {
 		return "";
 	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!CharNode;
-		result.popped = popped;
-		result.c = c;
-		return result;
-	}
 }
 
 class EndTokenNode : SimpleNode {
 	public override string generateCode() const {
 		return "";
 	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!EndTokenNode;
-		result.popped = popped;
-		return result;
-	}
 }
 
 class IdentifierNode : SimpleNode {
 	public override string generateCode() const {
 		return "";
-	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!IdentifierNode;
-		result.popped = popped;
-		return result;
 	}
 }
 
@@ -355,14 +348,6 @@ class ListNode : ComplexNode {
 		if (contents) contents.transform();
 		return this;
 	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!ListNode;
-		result.separator = separator;
-		result.contents = contents;
-		result.isDoWhile = isDoWhile;
-		return result;
-	}
 }
 
 class OptionalNode : ComplexNode {
@@ -385,12 +370,6 @@ class OptionalNode : ComplexNode {
 		// TODO peek & pop choices
 		return this;
 	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!OptionalNode;
-		result.contents = contents;
-		return result;
-	}
 }
 
 class ChoiceNode : ComplexNode {
@@ -412,12 +391,6 @@ class ChoiceNode : ComplexNode {
 		// TODO peek & pop choices
 		//
 		return this;
-	}
-
-	protected override AbstractNode dup() {
-		auto result = dupHelper!ChoiceNode;
-		result._choices = _choices;
-		return result;
 	}
 }
 
@@ -459,13 +432,27 @@ auto optional(A...)(A a) { return Optional!A(a); }
 //}
 
 
+T createNode(T)(string fieldType = "", string fieldName = "") {
+	auto result = new T;
+	result.fieldType = fieldType;
+	result.fieldName = fieldName;
+	return result;
+}
+
+AbstractNode getLastNodeOfSequence(AbstractNode n) {
+	while (n && n.next) n = n.next;
+	return n;
+}
+
+AbstractNode getNodeBeforeLastNodeOfSequence(AbstractNode n) {
+	while (n && n.next && n.next.next) n = n.next;
+	return n;
+}
 
 AbstractNode sequenceOfParserNodes(AbstractNode[] nodes...) {
-	// TODO учитывать choice
-	if (nodes.length == 0) return null;
+	if (nodes.length == 0) return new EmptyNode;
 	for (int i = 1; i < nodes.length; i++) {
-		AbstractNode end = nodes[i-1];
-		while (end.next) end = end.next;
+		AbstractNode end = getLastNodeOfSequence(nodes[i-1]);
 		end.next = nodes[i];
 		nodes[i].prev = end;
 	}
@@ -473,36 +460,32 @@ AbstractNode sequenceOfParserNodes(AbstractNode[] nodes...) {
 }
 
 AbstractNode createParserNodes(T : ASTNode!(nodes), nodes...)() {
-	return createParserNodes(sequence(nodes));
+	return createParserNodes(sequence(nodes));  // TODO: кодогенератор для создания ноды
+}
+
+AbstractNode addStartEndTokenNodes(string fieldName, string fieldType, AbstractNode[] contents) {
+	return sequenceOfParserNodes(
+		new StartTokenNode ~
+		contents ~
+		createNode!EndTokenNode(fieldType, fieldName)
+	);
 }
 
 AbstractNode createParserNodes(Keyword keyword) {
-	AbstractNode[] array = [ new StartTokenNode ];
-	array ~= map!(c => new CharNode(c))(keyword.keyword).array;
-	array ~= new EndTokenNode;
-	array[array.length-1].fieldType = "Token";
-	array[array.length-1].fieldName = keyword.keyword ~ "Keyword";
-	return sequenceOfParserNodes(array);
+	return addStartEndTokenNodes("Token", keyword.keyword ~ "Keyword",
+		map!(c => cast(AbstractNode)new CharNode(c))(keyword.keyword).array);
 }
 
 AbstractNode createParserNodes(identifier iden) {
-	auto result = new IdentifierNode;
-	result.fieldType = "Identifier";
-	result.fieldName = iden.fieldName;
-	return result;
+	return createNode!IdentifierNode("Identifier", iden.fieldName);
 }
 
 AbstractNode createParserNodes(T : ASTNode!(args), args...)(field!T f) {
-	auto result = createParserNodes(sequence(args));
-	//result.fieldType = "Identifier";
-	//result.fieldName = iden.fieldName;
-	return result;
+	return createParserNodes(sequence(args)/*, f.fieldName*/);
 }
 
 AbstractNode createParserNodes(T : ASTNode!(args), args...)(list!T l) {
-	auto result = new ListNode;
-	result.fieldType = T.stringof ~ "[]";
-	result.fieldName = l.fieldName;
+	auto result = createNode!ListNode(T.stringof ~ "[]", l.fieldName);
 	result.separator = l.separator;
 	result.contents = createParserNodes(sequence(args));
 	return result;
@@ -521,6 +504,8 @@ AbstractNode createParserNodes(Args...)(Choice!Args ch) {
 	auto result = new ChoiceNode;
 	auto merge = new MergeNode;
 	foreach (x; ch.a) {
+		AbstractNode n = sequenceOfParserNodes(createParserNodes(x), merge);
+
 		result._choices ~= sequenceOfParserNodes(createParserNodes(x), merge);
 		AbstractNode end = result._choices[result._choices.length-1];
 		while (end.next && end.next.next) end = end.next;
@@ -626,7 +611,18 @@ unittest {
 
 
 
+unittest {
+	class Test { int a; }
 
+	auto t = new Test;
+	t.a = 1;
+
+	auto t2 = new Test;
+	t2.a = 2;
+	t.tupleof = t2.tupleof;
+
+	writeln(t.a);
+}
 
 
 
