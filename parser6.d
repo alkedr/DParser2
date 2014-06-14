@@ -22,6 +22,8 @@ class AbstractParserNode {
 	}
 
 	protected abstract AbstractParserNode dup();
+	//protected abstract AbstractSimpleParserNode[] choices();
+	//protected abstract void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex);
 
 	public abstract AbstractParserNode transform();
 	public abstract string generateCode() const;
@@ -36,7 +38,7 @@ class AbstractSimpleParserNode : AbstractParserNode {
 	}
 
 	public override AbstractSimpleParserNode transform() {
-		next = next.transform();
+		if (next) next = next.transform();
 		return this;
 	}
 
@@ -45,6 +47,16 @@ class AbstractSimpleParserNode : AbstractParserNode {
 			format("if(%s){%s}else{error();}", condition, parsingCode)
 			: parsingCode;
 	}
+
+	//protected override AbstractSimpleParserNode[] choices() {
+	//	return [this];
+	//}
+
+	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+	//	if (nodeToPop is this) {
+	//		this.tmpVarIndex = tmpVarIndex++;
+	//	}
+	//}
 
 	protected abstract string condition() const;
 	protected abstract string parsingCode() const;
@@ -98,9 +110,19 @@ final class EndTokenParserNode : SimpleParserNode!EndTokenParserNode {
 	protected override string parsingCode() const { return "endToken;"; }
 }
 
-final class CharParserNode(char c) : SimpleParserNode!CharParserNode {
-	protected this() {}
-	protected this(typeof(this) that) { super(that); }
+final class CharParserNode : AbstractSimpleParserNode {
+	protected dchar c;
+
+	protected this(dchar c) { this.c = c; }
+	protected this(typeof(this) that) { super(that); this.c = that.c; }
+
+	protected override bool sameParserAs(AbstractSimpleParserNode that) {
+		return (cast(CharParserNode)that !is null) && ((cast(CharParserNode)that).c == this.c);
+	}
+
+	protected override CharParserNode dup() {
+		return new CharParserNode(this);
+	}
 
 	protected override string condition() const { return format("currentChar=='%c'", c); }
 	protected override string parsingCode() const { return "advance;"; }
@@ -143,7 +165,7 @@ final class ListParserNode : AbstractComplexParserNode {
 	}
 
 	public override AbstractParserNode transform() {
-		next = next.transform();
+		if (next) next = next.transform();
 		// TODO
 		return this;
 	}
@@ -160,6 +182,14 @@ final class ListParserNode : AbstractComplexParserNode {
 		result.isDoWhile = this.isDoWhile;
 		return result;
 	}
+
+	//protected override AbstractSimpleParserNode[] choices() {
+	//	return contents.choices;
+	//}
+
+	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+		//TODO
+	//}
 }
 
 // pop: choice(A, BC, BD) => choice(A, B - choice(C, D))
@@ -174,7 +204,7 @@ final class ChoiceParserNode : AbstractComplexParserNode {
 	}
 
 	public override AbstractParserNode transform() {
-		next = next.transform();
+		if (next) next = next.transform();
 		// TODO
 		return this;
 	}
@@ -189,6 +219,14 @@ final class ChoiceParserNode : AbstractComplexParserNode {
 		result._choices = this._choices;
 		return result;
 	}
+
+	//protected override AbstractSimpleParserNode[] choices() {
+	//	return join(map!(node => node.choices)(_choices).array);
+	//}
+
+	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+		//TODO
+	//}
 }
 
 // pop: copies next node into every merged branch
@@ -203,7 +241,7 @@ final class MergeBranchesParserNode : AbstractComplexParserNode {
 	}
 
 	public override AbstractParserNode transform() {
-		next = next.transform();
+		if (next) next = next.transform();
 		// TODO
 		return this;
 	}
@@ -218,6 +256,14 @@ final class MergeBranchesParserNode : AbstractComplexParserNode {
 		result.lastNodesOfBranches = this.lastNodesOfBranches;
 		return result;
 	}
+
+	//protected override AbstractSimpleParserNode[] choices() {
+	//	return next.choices;
+	//}
+
+	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+		//TODO
+	//}
 }
 
 
@@ -283,7 +329,7 @@ AbstractParserNode lastNodeOfSequence(AbstractParserNode n) {
 	return n;
 }
 
-AbstractParserNode getNodeBeforeLastNodeOfSequence(AbstractParserNode n) {
+AbstractParserNode nodeBeforeLastNodeOfSequence(AbstractParserNode n) {
 	while (n && n.next && n.next.next) n = n.next;
 	return n;
 }
@@ -300,46 +346,40 @@ AbstractParserNode createParserNodes(T : ASTNode!(nodes), nodes...)() {
 	return createParserNodes(sequence(nodes));  // TODO: кодогенератор для создания ноды
 }
 
-AbstractParserNode addStartEndTokenNodes(string fieldName, string fieldType, AbstractParserNode[] contents) {
-	return sequenceOfParserNodes(
-		new StartTokenParserNode ~
-		contents ~
-		createNode!EndTokenParserNode(fieldName)
-	);
-}
-
-AbstractParserNode createParserNodes(Empty empty) {
+AbstractParserNode createParserNodes(Empty empty, string fieldNamePrefix = "") {
 	return new EmptyParserNode;
 }
 
-AbstractParserNode createParserNodes(StartToken s) {
+AbstractParserNode createParserNodes(StartToken s, string fieldNamePrefix = "") {
 	return new StartTokenParserNode;
 }
 
-AbstractParserNode createParserNodes(char c)(Char!c s) {
-	return new CharParserNode!c;
+AbstractParserNode createParserNodes(char c)(Char!c s, string fieldNamePrefix = "") {
+	return new CharParserNode(c);
 }
 
-AbstractParserNode createParserNodes(EndToken s) {
+AbstractParserNode createParserNodes(EndToken s, string fieldNamePrefix = "") {
 	return new EndTokenParserNode;
 }
 
-AbstractParserNode createParserNodes(Identifier identifier) {
-	return createNode!IdentifierParserNode(identifier.fieldName);
+AbstractParserNode createParserNodes(Identifier identifier, string fieldNamePrefix = "") {
+	return createNode!IdentifierParserNode(fieldNamePrefix ~ identifier.fieldName);
 }
 
-AbstractParserNode createParserNodes(T : ASTNode!(args), args...)(field!T f) {
-	return createParserNodes(sequence(args)/*, f.fieldName*/);
+AbstractParserNode createParserNodes(T : ASTNode!(args), args...)(field!T f, string fieldNamePrefix = "") {
+	AbstractParserNode result = createParserNodes(sequence(args), fieldNamePrefix ~ f.fieldName ~ ".");
+	result.astNodeName = fieldNamePrefix ~ f.fieldName;
+	return result;
 }
 
-AbstractParserNode createParserNodes(T : ASTNode!(args), args...)(list!T l) {
-	auto result = createNode!ListParserNode(l.fieldName);
+AbstractParserNode createParserNodes(T : ASTNode!(args), args...)(list!T l, string fieldNamePrefix = "") {
+	auto result = createNode!ListParserNode(fieldNamePrefix ~ l.fieldName);
 	result.separator = l.separator;
 	result.contents = createParserNodes(sequence(args));
 	return result;
 }
 
-AbstractParserNode createParserNodes(Args...)(Sequence!Args seq) {
+AbstractParserNode createParserNodes(Args...)(Sequence!Args seq, string fieldNamePrefix = "") {
 	static if (seq.a.length == 0) return null; else
 	static if (seq.a.length == 1) return createParserNodes(seq.a[0]); else
 	return sequenceOfParserNodes(
@@ -348,7 +388,7 @@ AbstractParserNode createParserNodes(Args...)(Sequence!Args seq) {
 	);
 }
 
-AbstractParserNode createParserNodes(Args...)(Choice!Args ch) {
+AbstractParserNode createParserNodes(Args...)(Choice!Args ch, string fieldNamePrefix = "") {
 	auto result = new ChoiceParserNode;
 	auto merge = new MergeBranchesParserNode;
 	foreach (x; ch.a) {
@@ -360,13 +400,12 @@ AbstractParserNode createParserNodes(Args...)(Choice!Args ch) {
 		merge.lastNodesOfBranches ~= end;
 	}
 	result.next = merge;
-	//merge.prev = result;
 	return result;
 }
 
 
 
-void writelnNode(AbstractParserNode n, string indent = "", bool stopOnMerge = false) {
+void writelnNodeImpl(AbstractParserNode n, string indent = "", bool stopOnMerge = false) {
 	if (n) {
 		if (cast(MergeBranchesParserNode)n !is null) return;
 		write(indent);
@@ -376,18 +415,18 @@ void writelnNode(AbstractParserNode n, string indent = "", bool stopOnMerge = fa
 		//if (auto cn = cast(CharParserNode)n) write("c = ", cn.c);
 		if (auto cn = cast(ListParserNode)n) {
 			writeln("sep = ", cn.separator);
-			writelnNode(cn.contents, indent ~ "  ");
+			writelnNodeImpl(cn.contents, indent ~ "  ");
 		}
 		if (auto cn = cast(ChoiceParserNode)n) {
 			writeln(indent, "_choices:");
 			foreach (c; cn._choices) {
-				writelnNode(c, indent ~ "  ", true);
+				writelnNodeImpl(c, indent ~ "  ", true);
 				writeln();
 			}
 		}
 		//if (auto cn = cast(OptionalParserNode)n) {
 		//	writeln(indent, "contents:");
-		//	writelnNode(cn.contents, indent ~ "  ");
+		//	writelnNodeImpl(cn.contents, indent ~ "  ");
 		//}
 		if (auto cn = cast(MergeBranchesParserNode)n) {
 			writeln(cn.lastNodesOfBranches.length, " branches");
@@ -397,47 +436,26 @@ void writelnNode(AbstractParserNode n, string indent = "", bool stopOnMerge = fa
 		}
 
 		writeln();
-		if (n.next) writelnNode(n.next, indent);
+		if (n.next) writelnNodeImpl(n.next, indent);
 	}
+}
+
+void writelnNode(AbstractParserNode n) {
+	writeln("==============================");
+	writelnNodeImpl(n);
+	writeln("==============================");
+	writeln();
 }
 
 
 unittest {
 	class TestASTNode : ASTNode!(identifier("test")) {}
-	//writelnNode(createParserNodes(keyword!"qwe"()));
-	//writeln();
-	//writelnNode(createParserNodes(identifier("qwe")));
-	//writeln();
-	//writelnNode(createParserNodes(field!TestASTNode("qwe")));
-	//writeln();
-	//writelnNode(createParserNodes(dotList!TestASTNode("qwe")));
-	//writeln();
-	//writelnNode(createParserNodes(commaList!TestASTNode("qwe")));
-	//writeln();
-	//writelnNode(createParserNodes(sequence(keyword!"a", keyword!"b")));
-	//writeln();
-	//writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")));
-	//writeln();
-	//writelnNode(createParserNodes(optional(keyword!"a")));
-}
-
-
-
-unittest {
-	//class TestASTNode : ASTNode!(identifier("test")) {}
-	//writelnNode(createParserNodes(keyword!"qwe").transform);
-	//writeln();
-	//writelnNode(createParserNodes(identifier("qwe")).transform);
-	//writeln();
-	//writelnNode(createParserNodes(field!TestASTNode("qwe")).transform);
-	//writeln();
-	//writelnNode(createParserNodes(dotList!TestASTNode("qwe")).transform);
-	//writeln();
-	//writelnNode(createParserNodes(commaList!TestASTNode("qwe")).transform);
-	//writeln();
-	//writelnNode(createParserNodes(sequence(keyword!"a", keyword!"b")).transform);
-	//writeln();
-	//writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")).transform);
-	//writeln();
-	//writelnNode(createParserNodes(optional(keyword!"a")).transform);
+	writelnNode(createParserNodes(keyword!"qwe").transform);
+	writelnNode(createParserNodes(identifier("qwe")).transform);
+	writelnNode(createParserNodes(field!TestASTNode("qwe")).transform);
+	writelnNode(createParserNodes(dotList!TestASTNode("qwe")).transform);
+	writelnNode(createParserNodes(commaList!TestASTNode("qwe")).transform);
+	writelnNode(createParserNodes(sequence(keyword!"a", keyword!"b")).transform);
+	writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")).transform);
+	writelnNode(createParserNodes(optional(keyword!"a")).transform);
 }
