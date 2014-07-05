@@ -6,6 +6,232 @@ import std.string;
 import std.array;
 
 
+/*
+
+Команды генератора:
+	- keyword!"abc"("fieldName")         (сохраняет токен в поле abcKeyword или fieldName)
+	- identifier("fieldName")
+	- field!SomeNode("fieldName")
+	- sequence(...)
+	- choice(...)
+	- optional(...)
+	- list!(SomeNode, sep...)("fieldName")
+
+Ноды генератора:
+	- StartToken
+	- EndToken
+	- Char
+	- Identifier
+
+	- Choice
+	- List
+
+transform:
+	- Choice - peek & pop choices, transform choices
+	- List - transform contents and next
+	- others - transform next
+
+peek:
+	- Choice - return join(peeks of choices)
+	- List - return isDoWhile ? [contents.peek] :
+	- others - transform next
+
+
+*/
+
+
+
+
+class AbstractParserNode {
+	protected AbstractParserNode[] prevs;
+	protected AbstractParserNode next;
+
+	protected abstract AbstractParserNode[][string] peek(AbstractParserNode comingFrom);
+	protected abstract AbstractParserNode pop(AbstractParserNode comingFrom,
+		AbstractParserNode nodeToPop, int tmpVarIndex);
+
+	public abstract AbstractParserNode transform();
+	public abstract string generateCode() const;
+}
+
+
+class AbstractSimpleParserNode : AbstractParserNode {
+	public override AbstractSimpleParserNode transform() {
+		if (nexts.length > 1) {
+			while (true) {
+				auto choices = getChoices();
+				// TODO: get all choices
+				// TODO: find
+			}
+			// TODO: choice, peek & pop
+		}
+		foreach (ref next; nexts) {
+			next = next.transform();
+		}
+		return this;
+	}
+
+	public override string generateCode() const {
+		if (condition.empty) {
+			return parsingCode;
+		} else {
+			return format("if(%s){%s}else{error();}", condition, parsingCode);
+		}
+	}
+
+	protected override AbstractParserNode[][string] peek(AbstractParserNode comingFrom) {
+		return [ condition: [this] ];
+	}
+
+	protected override AbstractParserNode pop(
+		AbstractParserNode comingFrom,
+		AbstractParserNode nodeToPop,
+		int tmpVarIndex
+	) {
+		if (nodeToPop is this) {
+			if (prevs.length > 1) {
+				// TODO: copy this to each prev, return pop() on node that is after comingFrom
+			} else {
+				// TODO: return this with tmpVarIndex set and nexts and prevs unset
+				// TODO: add moving from tmp var to result somewhere
+			}
+		}
+		return null;
+	}
+
+	protected abstract string condition() const;
+	protected abstract string parsingCode() const;
+
+}
+
+
+class StartParserNode {
+}
+
+class EndParserNode {
+}
+
+class StartTokenParserNode {
+}
+
+class EndTokenParserNode {
+}
+
+class CharParserNode {
+}
+
+class IdentifierParserNode {
+}
+
+
+class ListParserNode {
+}
+
+
+
+
+
+
+
+
+
+
+
+
+/*
+
+class AbstractSimpleParserNode : AbstractParserNode {
+	private AbstractParserNode[][string] getChoices() {
+		AbstractParserNode[][string] result;
+		foreach (next; nexts) {
+			if (next.condition in result) {
+				result[next.condition] ~= next;
+			} else {
+				result[next.condition] = [ next ];
+			}
+		}
+		return result;
+	}
+
+	public override AbstractSimpleParserNode transform() {
+		if (nexts.length > 1) {
+			while (true) {
+				auto choices = getChoices();
+				// TODO: get all choices
+				// TODO: find
+			}
+			// TODO: choice, peek & pop
+		}
+		foreach (ref next; nexts) {
+			next = next.transform();
+		}
+		return this;
+	}
+
+	public override string generateCode() const {
+		if (condition.empty) {
+			return parsingCode;
+		} else {
+			return format("if(%s){%s}else{error();}", condition, parsingCode);
+		}
+	}
+
+	protected override AbstractParserNode[][string] peek(AbstractParserNode comingFrom) {
+		return [ condition: [this] ];
+	}
+
+	protected override AbstractParserNode pop(
+		AbstractParserNode comingFrom,
+		AbstractParserNode nodeToPop,
+		int tmpVarIndex
+	) {
+		if (nodeToPop is this) {
+			if (prevs.length > 1) {
+				// TODO: copy this to each prev, return pop() on node that is after comingFrom
+			} else {
+				// TODO: return this with tmpVarIndex set and nexts and prevs unset
+				// TODO: add moving from tmp var to result somewhere
+			}
+		}
+		return null;
+	}
+
+}
+
+
+class StartParserNode {
+}
+
+class EndParserNode {
+}
+
+class StartTokenParserNode {
+}
+
+class EndTokenParserNode {
+}
+
+class CharParserNode {
+}
+
+class IdentifierParserNode {
+}
+
+
+class ListParserNode {
+}
+
+
+
+*/
+
+
+
+
+
+/+
+
+
 class AbstractParserNode {
 	protected AbstractParserNode next;
 	public string fieldName;
@@ -22,8 +248,8 @@ class AbstractParserNode {
 	}
 
 	protected abstract AbstractParserNode dup();
-	//protected abstract AbstractSimpleParserNode[] choices();
-	//protected abstract void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex);
+	protected abstract AbstractSimpleParserNode[] choices();
+	protected abstract void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex);
 
 	public abstract AbstractParserNode transform();
 	public abstract string generateCode() const;
@@ -48,15 +274,15 @@ class AbstractSimpleParserNode : AbstractParserNode {
 			: parsingCode;
 	}
 
-	//protected override AbstractSimpleParserNode[] choices() {
-	//	return [this];
-	//}
+	protected override AbstractSimpleParserNode[] choices() {
+		return [this];
+	}
 
-	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
-	//	if (nodeToPop is this) {
-	//		this.tmpVarIndex = tmpVarIndex++;
-	//	}
-	//}
+	protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+		if (nodeToPop is this) {
+			this.tmpVarIndex = tmpVarIndex++;
+		}
+	}
 
 	protected abstract string condition() const;
 	protected abstract string parsingCode() const;
@@ -183,13 +409,13 @@ final class ListParserNode : AbstractComplexParserNode {
 		return result;
 	}
 
-	//protected override AbstractSimpleParserNode[] choices() {
-	//	return contents.choices;
-	//}
+	protected override AbstractSimpleParserNode[] choices() {
+		return contents.choices;
+	}
 
-	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+	protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
 		//TODO
-	//}
+	}
 }
 
 // pop: choice(A, BC, BD) => choice(A, B - choice(C, D))
@@ -220,13 +446,13 @@ final class ChoiceParserNode : AbstractComplexParserNode {
 		return result;
 	}
 
-	//protected override AbstractSimpleParserNode[] choices() {
-	//	return join(map!(node => node.choices)(_choices).array);
-	//}
+	protected override AbstractSimpleParserNode[] choices() {
+		return join(map!(node => node.choices)(_choices).array);
+	}
 
-	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+	protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
 		//TODO
-	//}
+	}
 }
 
 // pop: copies next node into every merged branch
@@ -257,13 +483,13 @@ final class MergeBranchesParserNode : AbstractComplexParserNode {
 		return result;
 	}
 
-	//protected override AbstractSimpleParserNode[] choices() {
-	//	return next.choices;
-	//}
+	protected override AbstractSimpleParserNode[] choices() {
+		return next.choices;
+	}
 
-	//protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
+	protected override void pop(AbstractSimpleParserNode nodeToPop, ref int tmpVarIndex) {
 		//TODO
-	//}
+	}
 }
 
 
@@ -459,3 +685,4 @@ unittest {
 	writelnNode(createParserNodes(choice(keyword!"a", keyword!"b")).transform);
 	writelnNode(createParserNodes(optional(keyword!"a")).transform);
 }
++/

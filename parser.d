@@ -7,6 +7,41 @@ import std.ascii;
 
 
 
+class Parser {
+	public Tokenizer tokenizer;
+
+	public this(Tokenizer tokenizer) {
+		this.tokenizer = tokenizer;
+	}
+
+	public TopLevelDeclaration parseDeclaration() {
+		mixin(generateParsingCode!TopLevelDeclaration("result"));
+		return result;
+	}
+
+	private static string generateParsingCode(T)(string resultVariableName) {
+		return T.stringof ~ " " ~ resultVariableName ~ " = new " ~ T.stringof ~ ";";
+	}
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+/+
 //struct ParserGenerator {
 //	string action;  // used if not empty
 
@@ -286,3 +321,4 @@ class Generator {
 
 	}
 }
++/
