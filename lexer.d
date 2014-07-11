@@ -9,15 +9,63 @@ import std.stdio;
 
 struct Lexer {
 	struct Token {
-		struct StringLiteral { dstring value; }
-		struct CharacterLiteral { dchar value; }
-		struct IntegerLiteral { BigInt value; }
-		struct FloatLiteral { BigInt mantissa; long exponent; }
+		struct Unknown {
+			string errorMessage;
+			ubyte triedToParseAsType = UNKNOWN;
+		}
+
+		struct Comment {
+			enum Type {
+				BLOCK,
+				LINE,
+				NESTING_BLOCK,
+			}
+			dstring value;
+			Type type;
+		}
+
+		struct StringLiteral {
+			enum Type {
+				WYSIWYG,
+				ALTERNATE_WYSIWYG,
+				DOUBLE_QUOTED,
+				HEX,
+				DELIMITED,
+				TOKEN,
+			}
+			dstring value;
+			Type type;
+		}
+
+		struct CharacterLiteral {
+			dchar value;
+		}
+
+		struct IntegerLiteral {
+			BigInt value;
+			bool hasLongSuffix;
+			bool hasUnsignedSuffix;
+		}
+
+		struct FloatLiteral {
+			enum TypeSuffix {
+				NONE,
+				FLOAT,
+				REAL,
+			}
+			BigInt mantissa;
+			long exponent;
+			TypeSuffix typeSuffix;
+			bool hasImaginarySuffix;
+		}
 
 		dstring asString;
 		ulong position;
+
 		ubyte type;
 		union {
+			Unknown unknown;
+			Comment comment;
 			StringLiteral stringLiteral;
 			CharacterLiteral characterLiteral;
 			IntegerLiteral integerLiteral;
@@ -26,13 +74,14 @@ struct Lexer {
 
 		enum {
 			UNKNOWN = 0,
-			END_OF_FILE = 1,
+			COMMENT = 1,
 			IDENTIFIER = 2,
 			STRING_LITERAL = 3,
 			CHARACTER_LITERAL = 4,
 			INTEGER_LITERAL = 5,
 			FLOAT_LITERAL = 6,
-			__LAST_DYNAMIC_TOKEN = 6
+			END_OF_FILE = 7,
+			__LAST_DYNAMIC_TOKEN = 7
 		}
 		template STATIC(string s) {
 			static assert(staticTokens.countUntil(s) != -1);
@@ -44,12 +93,22 @@ struct Lexer {
 	Token currentToken;
 
 	this(dstring code) {
-		this.code = code ~ 0;
+		this.code = code ~ 0 ~ 0;
 		popFront();
 	}
 
+	struct LineSpecialToken {
+		uint lineStartPosition;
+		uint lineNumberDelta;  // difference between physical and virtual line numbers
+		dstring fileName;
+	}
+
 	private ulong position;
-	private ulong[] lineBeginPositions = [ 0 ];
+
+	// to find line number for position find nearest preceding lineBeginPosition
+	// and add lineNumberDelta of nearest preceding lineSpecialToken
+	private ulong[] lineBeginPositions = [ 0 ];    // physical lines (#line has no effect here)
+	private LineSpecialToken[] lineSpecialTokens = [{0, 0, ""}];  // sorted by lineStartPosition
 
 	Token front() { return currentToken; }
 	Token moveFront() { return currentToken; }
@@ -58,8 +117,7 @@ struct Lexer {
 	void popFront() {
 		skipWhitespaceLineBreaksAndComments();
 		currentToken.position = position;
-if(isIdentifierFirstChar(code[position])){do{if(code[position+0]=='\U0000005F'){if(code[position+1]=='\U0000005F'){if(code[position+2]=='\U00000044'){if(code[position+3]=='\U00000041'){if(code[position+4]=='\U00000054'){if(code[position+5]=='\U00000045'){if(code[position+6]=='\U0000005F'){if(code[position+7]=='\U0000005F'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`__DATE__`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U0000004C'){if(code[position+3]=='\U00000049'){if(code[position+4]=='\U0000004E'){if(code[position+5]=='\U00000045'){if(code[position+6]=='\U0000005F'){if(code[position+7]=='\U0000005F'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`__LINE__`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000070'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U0000006D'){if(code[position+7]=='\U00000065'){if(code[position+8]=='\U00000074'){if(code[position+9]=='\U00000065'){if(code[position+10]=='\U00000072'){if(code[position+11]=='\U00000073'){{if (!isIdentifierChar(code[position+12])){currentToken.type=Token.STATIC!`__parameters`;position+=12;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000050'){if(code[position+3]=='\U00000052'){if(code[position+4]=='\U00000045'){if(code[position+5]=='\U00000054'){if(code[position+6]=='\U00000054'){if(code[position+7]=='\U00000059'){if(code[position+8]=='\U0000005F'){if(code[position+9]=='\U00000046'){if(code[position+10]=='\U00000055'){if(code[position+11]=='\U0000004E'){if(code[position+12]=='\U00000043'){if(code[position+13]=='\U00000054'){if(code[position+14]=='\U00000049'){if(code[position+15]=='\U0000004F'){if(code[position+16]=='\U0000004E'){if(code[position+17]=='\U0000005F'){if(code[position+18]=='\U0000005F'){{if (!isIdentifierChar(code[position+19])){currentToken.type=Token.STATIC!`__PRETTY_FUNCTION__`;position+=19;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000054'){if(code[position+3]=='\U00000049'){if(code[position+4]=='\U0000004D'){if(code[position+5]=='\U00000045'){if(code[position+6]=='\U0000005F'){if(code[position+7]=='\U0000005F'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`__TIME__`;position+=8;break;}}}else {}}else if(code[position+6]=='\U00000053'){if(code[position+7]=='\U00000054'){if(code[position+8]=='\U00000041'){if(code[position+9]=='\U0000004D'){if(code[position+10]=='\U00000050'){if(code[position+11]=='\U0000005F'){if(code[position+12]=='\U0000005F'){{if (!isIdentifierChar(code[position+13])){currentToken.type=Token.STATIC!`__TIMESTAMP__`;position+=13;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000072'){if(code[position+4]=='\U00000061'){if(code[position+5]=='\U00000069'){if(code[position+6]=='\U00000074'){if(code[position+7]=='\U00000073'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`__traits`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000045'){if(code[position+3]=='\U0000004F'){if(code[position+4]=='\U00000046'){if(code[position+5]=='\U0000005F'){if(code[position+6]=='\U0000005F'){{lexEofToken;break;}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U0000004D'){if(code[position+3]=='\U0000004F'){if(code[position+4]=='\U00000044'){if(code[position+5]=='\U00000055'){if(code[position+6]=='\U0000004C'){if(code[position+7]=='\U00000045'){if(code[position+8]=='\U0000005F'){if(code[position+9]=='\U0000005F'){{if (!isIdentifierChar(code[position+10])){currentToken.type=Token.STATIC!`__MODULE__`;position+=10;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000046'){if(code[position+3]=='\U00000049'){if(code[position+4]=='\U0000004C'){if(code[position+5]=='\U00000045'){if(code[position+6]=='\U0000005F'){if(code[position+7]=='\U0000005F'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`__FILE__`;position+=8;break;}}}else {}}else {}}else {}}else {}}else if(code[position+3]=='\U00000055'){if(code[position+4]=='\U0000004E'){if(code[position+5]=='\U00000043'){if(code[position+6]=='\U00000054'){if(code[position+7]=='\U00000049'){if(code[position+8]=='\U0000004F'){if(code[position+9]=='\U0000004E'){if(code[position+10]=='\U0000005F'){if(code[position+11]=='\U0000005F'){{if (!isIdentifierChar(code[position+12])){currentToken.type=Token.STATIC!`__FUNCTION__`;position+=12;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000076'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000063'){if(code[position+5]=='\U00000074'){if(code[position+6]=='\U0000006F'){if(code[position+7]=='\U00000072'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`__vector`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000056'){if(code[position+3]=='\U00000045'){if(code[position+4]=='\U0000004E'){if(code[position+5]=='\U00000044'){if(code[position+6]=='\U0000004F'){if(code[position+7]=='\U00000052'){if(code[position+8]=='\U0000005F'){if(code[position+9]=='\U0000005F'){{if (!isIdentifierChar(code[position+10])){currentToken.type=Token.STATIC!`__VENDOR__`;position+=10;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+4]=='\U00000052'){if(code[position+5]=='\U00000053'){if(code[position+6]=='\U00000049'){if(code[position+7]=='\U0000004F'){if(code[position+8]=='\U0000004E'){if(code[position+9]=='\U0000005F'){if(code[position+10]=='\U0000005F'){{if (!isIdentifierChar(code[position+11])){currentToken.type=Token.STATIC!`__VERSION__`;position+=11;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000067'){if(code[position+3]=='\U00000073'){if(code[position+4]=='\U00000068'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U00000072'){if(code[position+7]=='\U00000065'){if(code[position+8]=='\U00000064'){{if (!isIdentifierChar(code[position+9])){currentToken.type=Token.STATIC!`__gshared`;position+=9;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000061'){if(code[position+1]=='\U0000006C'){if(code[position+2]=='\U00000069'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000073'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`alias`;position+=5;break;}}}else {}}else if(code[position+3]=='\U00000067'){if(code[position+4]=='\U0000006E'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`align`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000075'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U0000006F'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`auto`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000062'){if(code[position+2]=='\U00000073'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U00000063'){if(code[position+7]=='\U00000074'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`abstract`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000073'){if(code[position+2]=='\U0000006D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`asm`;position+=3;break;}}}else if(code[position+2]=='\U00000073'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`assert`;position+=6;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000062'){if(code[position+1]=='\U00000079'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000065'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`byte`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000072'){if(code[position+2]=='\U00000065'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U0000006B'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`break`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U00000064'){if(code[position+3]=='\U00000079'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`body`;position+=4;break;}}}else {}}else if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U0000006C'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`bool`;position+=4;break;}}}else {}}else {}}else {}}else if(code[position+0]=='\U00000063'){if(code[position+1]=='\U00000064'){if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000062'){if(code[position+5]=='\U0000006C'){if(code[position+6]=='\U00000065'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`cdouble`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006C'){if(code[position+2]=='\U00000061'){if(code[position+3]=='\U00000073'){if(code[position+4]=='\U00000073'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`class`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000061'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000063'){if(code[position+4]=='\U00000068'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`catch`;position+=5;break;}}}else {}}else {}}else if(code[position+2]=='\U00000073'){if(code[position+3]=='\U00000074'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`cast`;position+=4;break;}}}else if(code[position+3]=='\U00000065'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`case`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000065'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000074'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`cent`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000066'){if(code[position+2]=='\U0000006C'){if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U00000061'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`cfloat`;position+=6;break;}}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000072'){if(code[position+2]=='\U00000065'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U0000006C'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`creal`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000069'){if(code[position+5]=='\U0000006E'){if(code[position+6]=='\U00000075'){if(code[position+7]=='\U00000065'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`continue`;position+=8;break;}}}else {}}else {}}else {}}else {}}else if(code[position+3]=='\U00000073'){if(code[position+4]=='\U00000074'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`const`;position+=5;break;}}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000064'){if(code[position+1]=='\U00000065'){if(code[position+2]=='\U0000006C'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000074'){if(code[position+5]=='\U00000065'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`delete`;position+=6;break;}}}else {}}else if(code[position+4]=='\U00000067'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U00000074'){if(code[position+7]=='\U00000065'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`delegate`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000070'){if(code[position+3]=='\U00000072'){if(code[position+4]=='\U00000065'){if(code[position+5]=='\U00000063'){if(code[position+6]=='\U00000061'){if(code[position+7]=='\U00000074'){if(code[position+8]=='\U00000065'){if(code[position+9]=='\U00000064'){{if (!isIdentifierChar(code[position+10])){currentToken.type=Token.STATIC!`deprecated`;position+=10;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000062'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000067'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`debug`;position+=5;break;}}}else {}}else {}}else if(code[position+2]=='\U00000066'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000075'){if(code[position+5]=='\U0000006C'){if(code[position+6]=='\U00000074'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`default`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000063'){if(code[position+2]=='\U00000068'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000072'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`dchar`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U00000075'){if(code[position+3]=='\U00000062'){if(code[position+4]=='\U0000006C'){if(code[position+5]=='\U00000065'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`double`;position+=6;break;}}}else {}}else {}}else {}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`do`;position+=2;break;}}}else {}}else if(code[position+0]=='\U00000065'){if(code[position+1]=='\U0000006C'){if(code[position+2]=='\U00000073'){if(code[position+3]=='\U00000065'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`else`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000078'){if(code[position+2]=='\U00000070'){if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`export`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U0000006E'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`extern`;position+=6;break;}}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006E'){if(code[position+2]=='\U00000075'){if(code[position+3]=='\U0000006D'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`enum`;position+=4;break;}}}else {}}else {}}else {}}else if(code[position+0]=='\U00000066'){if(code[position+1]=='\U0000006C'){if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000074'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`float`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000061'){if(code[position+2]=='\U0000006C'){if(code[position+3]=='\U00000073'){if(code[position+4]=='\U00000065'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`false`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000069'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U0000006C'){if(code[position+5]=='\U0000006C'){if(code[position+6]=='\U00000079'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`finally`;position+=7;break;}}}else {}}else {if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`final`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000075'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000063'){if(code[position+4]=='\U00000074'){if(code[position+5]=='\U00000069'){if(code[position+6]=='\U0000006F'){if(code[position+7]=='\U0000006E'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`function`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U00000072'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000061'){if(code[position+5]=='\U00000063'){if(code[position+6]=='\U00000068'){if(code[position+7]=='\U0000005F'){if(code[position+8]=='\U00000072'){if(code[position+9]=='\U00000065'){if(code[position+10]=='\U00000076'){if(code[position+11]=='\U00000065'){if(code[position+12]=='\U00000072'){if(code[position+13]=='\U00000073'){if(code[position+14]=='\U00000065'){{if (!isIdentifierChar(code[position+15])){currentToken.type=Token.STATIC!`foreach_reverse`;position+=15;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`foreach`;position+=7;break;}}}else {}}else {}}else {}}else {if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`for`;position+=3;break;}}}else {}}else {}}else if(code[position+0]=='\U00000067'){if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U0000006F'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`goto`;position+=4;break;}}}else {}}else {}}else {}}else if(code[position+0]=='\U00000069'){if(code[position+1]=='\U00000064'){if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000062'){if(code[position+5]=='\U0000006C'){if(code[position+6]=='\U00000065'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`idouble`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006D'){if(code[position+2]=='\U00000070'){if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`import`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U0000006D'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000074'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U00000062'){if(code[position+7]=='\U0000006C'){if(code[position+8]=='\U00000065'){{if (!isIdentifierChar(code[position+9])){currentToken.type=Token.STATIC!`immutable`;position+=9;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000066'){if(code[position+2]=='\U0000006C'){if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U00000061'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`ifloat`;position+=6;break;}}}else {}}else {}}else {}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`if`;position+=2;break;}}}else if(code[position+1]=='\U0000006E'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000066'){if(code[position+6]=='\U00000061'){if(code[position+7]=='\U00000063'){if(code[position+8]=='\U00000065'){{if (!isIdentifierChar(code[position+9])){currentToken.type=Token.STATIC!`interface`;position+=9;break;}}}else {}}else {}}else {}}else {}}else {}}else {if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`int`;position+=3;break;}}}else if(code[position+2]=='\U00000076'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000069'){if(code[position+6]=='\U00000061'){if(code[position+7]=='\U0000006E'){if(code[position+8]=='\U00000074'){{if (!isIdentifierChar(code[position+9])){currentToken.type=Token.STATIC!`invariant`;position+=9;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000074'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`inout`;position+=5;break;}}}else {}}else {}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`in`;position+=2;break;}}}else if(code[position+1]=='\U00000072'){if(code[position+2]=='\U00000065'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U0000006C'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`ireal`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000073'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`is`;position+=2;break;}}}else {}}else if(code[position+0]=='\U0000006C'){if(code[position+1]=='\U00000061'){if(code[position+2]=='\U0000007A'){if(code[position+3]=='\U00000079'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`lazy`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000067'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`long`;position+=4;break;}}}else {}}else {}}else {}}else if(code[position+0]=='\U0000006D'){if(code[position+1]=='\U00000061'){if(code[position+2]=='\U00000063'){if(code[position+3]=='\U00000072'){if(code[position+4]=='\U0000006F'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`macro`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000069'){if(code[position+2]=='\U00000078'){if(code[position+3]=='\U00000069'){if(code[position+4]=='\U0000006E'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`mixin`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U00000064'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U0000006C'){if(code[position+5]=='\U00000065'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`module`;position+=6;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U0000006E'){if(code[position+1]=='\U00000065'){if(code[position+2]=='\U00000077'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`new`;position+=3;break;}}}else {}}else if(code[position+1]=='\U00000075'){if(code[position+2]=='\U0000006C'){if(code[position+3]=='\U0000006C'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`null`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000068'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U0000006F'){if(code[position+6]=='\U00000077'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`nothrow`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U0000006F'){if(code[position+1]=='\U00000075'){if(code[position+2]=='\U00000074'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`out`;position+=3;break;}}}else {}}else if(code[position+1]=='\U00000076'){if(code[position+2]=='\U00000065'){if(code[position+3]=='\U00000072'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000069'){if(code[position+6]=='\U00000064'){if(code[position+7]=='\U00000065'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`override`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000070'){if(code[position+1]=='\U00000061'){if(code[position+2]=='\U00000063'){if(code[position+3]=='\U0000006B'){if(code[position+4]=='\U00000061'){if(code[position+5]=='\U00000067'){if(code[position+6]=='\U00000065'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`package`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000075'){if(code[position+2]=='\U00000062'){if(code[position+3]=='\U0000006C'){if(code[position+4]=='\U00000069'){if(code[position+5]=='\U00000063'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`public`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U00000072'){if(code[position+3]=='\U00000065'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`pure`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000072'){if(code[position+2]=='\U00000061'){if(code[position+3]=='\U00000067'){if(code[position+4]=='\U0000006D'){if(code[position+5]=='\U00000061'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`pragma`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U00000069'){if(code[position+3]=='\U00000076'){if(code[position+4]=='\U00000061'){if(code[position+5]=='\U00000074'){if(code[position+6]=='\U00000065'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`private`;position+=7;break;}}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000065'){if(code[position+5]=='\U00000063'){if(code[position+6]=='\U00000074'){if(code[position+7]=='\U00000065'){if(code[position+8]=='\U00000064'){{if (!isIdentifierChar(code[position+9])){currentToken.type=Token.STATIC!`protected`;position+=9;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000072'){if(code[position+1]=='\U00000065'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U0000006E'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`return`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U00000061'){if(code[position+3]=='\U0000006C'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`real`;position+=4;break;}}}else {}}else if(code[position+2]=='\U00000066'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`ref`;position+=3;break;}}}else {}}else {}}else if(code[position+0]=='\U00000073'){if(code[position+1]=='\U00000068'){if(code[position+2]=='\U00000061'){if(code[position+3]=='\U00000072'){if(code[position+4]=='\U00000065'){if(code[position+5]=='\U00000064'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`shared`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000072'){if(code[position+4]=='\U00000074'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`short`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000074'){if(code[position+2]=='\U00000061'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000069'){if(code[position+5]=='\U00000063'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`static`;position+=6;break;}}}else {}}else {}}else {}}else if(code[position+2]=='\U00000072'){if(code[position+3]=='\U00000075'){if(code[position+4]=='\U00000063'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`struct`;position+=6;break;}}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000075'){if(code[position+2]=='\U00000070'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000072'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`super`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000079'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000063'){if(code[position+4]=='\U00000068'){if(code[position+5]=='\U00000072'){if(code[position+6]=='\U0000006F'){if(code[position+7]=='\U0000006E'){if(code[position+8]=='\U00000069'){if(code[position+9]=='\U0000007A'){if(code[position+10]=='\U00000065'){if(code[position+11]=='\U00000064'){{if (!isIdentifierChar(code[position+12])){currentToken.type=Token.STATIC!`synchronized`;position+=12;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000063'){if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U00000070'){if(code[position+4]=='\U00000065'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`scope`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000077'){if(code[position+2]=='\U00000069'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000063'){if(code[position+5]=='\U00000068'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`switch`;position+=6;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000074'){if(code[position+1]=='\U00000068'){if(code[position+2]=='\U00000069'){if(code[position+3]=='\U00000073'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`this`;position+=4;break;}}}else {}}else if(code[position+2]=='\U00000072'){if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U00000077'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`throw`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000065'){if(code[position+2]=='\U0000006D'){if(code[position+3]=='\U00000070'){if(code[position+4]=='\U0000006C'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U00000074'){if(code[position+7]=='\U00000065'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`template`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000079'){if(code[position+2]=='\U00000070'){if(code[position+3]=='\U00000065'){if(code[position+4]=='\U00000064'){if(code[position+5]=='\U00000065'){if(code[position+6]=='\U00000066'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`typedef`;position+=7;break;}}}else {}}else {}}else if(code[position+4]=='\U00000069'){if(code[position+5]=='\U00000064'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`typeid`;position+=6;break;}}}else {}}else if(code[position+4]=='\U0000006F'){if(code[position+5]=='\U00000066'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`typeof`;position+=6;break;}}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000072'){if(code[position+2]=='\U00000075'){if(code[position+3]=='\U00000065'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`true`;position+=4;break;}}}else {}}else if(code[position+2]=='\U00000079'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`try`;position+=3;break;}}}else {}}else {}}else if(code[position+0]=='\U00000075'){if(code[position+1]=='\U0000006C'){if(code[position+2]=='\U0000006F'){if(code[position+3]=='\U0000006E'){if(code[position+4]=='\U00000067'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`ulong`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000069'){if(code[position+2]=='\U0000006E'){if(code[position+3]=='\U00000074'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`uint`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000062'){if(code[position+2]=='\U00000079'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000065'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`ubyte`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006E'){if(code[position+2]=='\U00000069'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000074'){if(code[position+5]=='\U00000065'){if(code[position+6]=='\U00000073'){if(code[position+7]=='\U00000074'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`unittest`;position+=8;break;}}}else {}}else {}}else {}}else {}}else if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U0000006E'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`union`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000063'){if(code[position+2]=='\U00000065'){if(code[position+3]=='\U0000006E'){if(code[position+4]=='\U00000074'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`ucent`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000073'){if(code[position+2]=='\U00000068'){if(code[position+3]=='\U0000006F'){if(code[position+4]=='\U00000072'){if(code[position+5]=='\U00000074'){{if (!isIdentifierChar(code[position+6])){currentToken.type=Token.STATIC!`ushort`;position+=6;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+0]=='\U00000076'){if(code[position+1]=='\U00000065'){if(code[position+2]=='\U00000072'){if(code[position+3]=='\U00000073'){if(code[position+4]=='\U00000069'){if(code[position+5]=='\U0000006F'){if(code[position+6]=='\U0000006E'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`version`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U00000069'){if(code[position+2]=='\U00000072'){if(code[position+3]=='\U00000074'){if(code[position+4]=='\U00000075'){if(code[position+5]=='\U00000061'){if(code[position+6]=='\U0000006C'){{if (!isIdentifierChar(code[position+7])){currentToken.type=Token.STATIC!`virtual`;position+=7;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+1]=='\U0000006F'){if(code[position+2]=='\U0000006C'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000074'){if(code[position+5]=='\U00000069'){if(code[position+6]=='\U0000006C'){if(code[position+7]=='\U00000065'){{if (!isIdentifierChar(code[position+8])){currentToken.type=Token.STATIC!`volatile`;position+=8;break;}}}else {}}else {}}else {}}else {}}else {}}else if(code[position+2]=='\U00000069'){if(code[position+3]=='\U00000064'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`void`;position+=4;break;}}}else {}}else {}}else {}}else if(code[position+0]=='\U00000077'){if(code[position+1]=='\U00000068'){if(code[position+2]=='\U00000069'){if(code[position+3]=='\U0000006C'){if(code[position+4]=='\U00000065'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`while`;position+=5;break;}}}else {}}else {}}else {}}else if(code[position+1]=='\U00000069'){if(code[position+2]=='\U00000074'){if(code[position+3]=='\U00000068'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`with`;position+=4;break;}}}else {}}else {}}else if(code[position+1]=='\U00000063'){if(code[position+2]=='\U00000068'){if(code[position+3]=='\U00000061'){if(code[position+4]=='\U00000072'){{if (!isIdentifierChar(code[position+5])){currentToken.type=Token.STATIC!`wchar`;position+=5;break;}}}else {}}else {}}else {}}else {}}else {}lexIdentifier;}while(0);}else{do{if(code[position+0]=='\U00000000'){{lexEofToken;break;}}else if(code[position+0]=='\U0000003E'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`>=`;position+=2;break;}}}else if(code[position+1]=='\U0000003E'){if(code[position+2]=='\U0000003D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`>>=`;position+=3;break;}}}else if(code[position+2]=='\U0000003E'){if(code[position+3]=='\U0000003D'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`>>>=`;position+=4;break;}}}else {if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`>>>`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`>>`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`>`;position+=1;break;}}}else if(code[position+0]=='\U0000005D'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`]`;position+=1;break;}}}else if(code[position+0]=='\U0000007C'){if(code[position+1]=='\U0000007C'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`||`;position+=2;break;}}}else if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`|=`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`|`;position+=1;break;}}}else if(code[position+0]=='\U0000003F'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`?`;position+=1;break;}}}else if(code[position+0]=='\U0000005E'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`^=`;position+=2;break;}}}else if(code[position+1]=='\U0000005E'){if(code[position+2]=='\U0000003D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`^^=`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`^^`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`^`;position+=1;break;}}}else if(code[position+0]=='\U0000007D'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`}`;position+=1;break;}}}else if(code[position+0]=='\U00000021'){if(code[position+1]=='\U0000003C'){if(code[position+2]=='\U0000003D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`!<=`;position+=3;break;}}}else if(code[position+2]=='\U0000003E'){if(code[position+3]=='\U0000003D'){{if (!isIdentifierChar(code[position+4])){currentToken.type=Token.STATIC!`!<>=`;position+=4;break;}}}else {if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`!<>`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`!<`;position+=2;break;}}}else if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`!=`;position+=2;break;}}}else if(code[position+1]=='\U0000003E'){if(code[position+2]=='\U0000003D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`!>=`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`!>`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`!`;position+=1;break;}}}else if(code[position+0]=='\U00000040'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`@`;position+=1;break;}}}else if(code[position+0]=='\U0000007E'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`~=`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`~`;position+=1;break;}}}else if(code[position+0]=='\U00000024'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`$`;position+=1;break;}}}else if(code[position+0]=='\U00000025'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`%=`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`%`;position+=1;break;}}}else if(code[position+0]=='\U00000026'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`&=`;position+=2;break;}}}else if(code[position+1]=='\U00000026'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`&&`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`&`;position+=1;break;}}}else if(code[position+0]=='\U00000028'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`(`;position+=1;break;}}}else if(code[position+0]=='\U00000029'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`)`;position+=1;break;}}}else if(code[position+0]=='\U0000002A'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`*=`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`*`;position+=1;break;}}}else if(code[position+0]=='\U0000002B'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`+=`;position+=2;break;}}}else if(code[position+1]=='\U0000002B'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`++`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`+`;position+=1;break;}}}else if(code[position+0]=='\U0000002C'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`,`;position+=1;break;}}}else if(code[position+0]=='\U0000002D'){if(code[position+1]=='\U0000002D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`--`;position+=2;break;}}}else if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`-=`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`-`;position+=1;break;}}}else if(code[position+0]=='\U0000002E'){if(code[position+1]=='\U0000002E'){if(code[position+2]=='\U0000002E'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`...`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`..`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`.`;position+=1;break;}}}else if(code[position+0]=='\U0000002F'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`/=`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`/`;position+=1;break;}}}else if(code[position+0]=='\U0000001A'){{lexEofToken;break;}}else if(code[position+0]=='\U0000003A'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`:`;position+=1;break;}}}else if(code[position+0]=='\U0000003B'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`;`;position+=1;break;}}}else if(code[position+0]=='\U0000003C'){if(code[position+1]=='\U0000003C'){if(code[position+2]=='\U0000003D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`<<=`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`<<`;position+=2;break;}}}else if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`<=`;position+=2;break;}}}else if(code[position+1]=='\U0000003E'){if(code[position+2]=='\U0000003D'){{if (!isIdentifierChar(code[position+3])){currentToken.type=Token.STATIC!`<>=`;position+=3;break;}}}else {if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`<>`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`<`;position+=1;break;}}}else if(code[position+0]=='\U0000005B'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`[`;position+=1;break;}}}else if(code[position+0]=='\U0000003D'){if(code[position+1]=='\U0000003D'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`==`;position+=2;break;}}}else if(code[position+1]=='\U0000003E'){{if (!isIdentifierChar(code[position+2])){currentToken.type=Token.STATIC!`=>`;position+=2;break;}}}else {if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`=`;position+=1;break;}}}else if(code[position+0]=='\U0000007B'){{if (!isIdentifierChar(code[position+1])){currentToken.type=Token.STATIC!`{`;position+=1;break;}}}else {}lexUnknown;}while(0);}
-		//mixin(generateLexerCode);
+		mixin(generateLexerCode);
 		currentToken.asString = code[currentToken.position .. position];
 	}
 
@@ -80,97 +138,268 @@ if(isIdentifierFirstChar(code[position])){do{if(code[position+0]=='\U0000005F'){
 	}
 
 
-	unittest {
-		writeln(generateLexerCode);
-	}
+	private class CodeGenerator {
+		private string code = "";
+		private CodeGenerator[string] cases;
+		private bool previousCharWasFirstIdentifierChar = false;
+
+		private CodeGenerator getCodeGeneratorForCase(string caseString) {
+			if (caseString !in cases) cases[caseString] = new CodeGenerator;
+			return cases[caseString];
+		}
+
+		private CodeGenerator getCodeGeneratorForChar(char c) {
+			auto result = getCodeGeneratorForCase(format(`case'\x%02X':`, c));
+			result.previousCharWasFirstIdentifierChar = isIdentifierFirstChar(c);
+			return result;
+		}
 
 
-	private static dstring generateLexerCode() {
-		return generateCode(
-			staticTokens,
-			[
-				["\u0000", "\u001A", "__EOF__"]: "lexEofToken;",
-				//["`"]: "lexAlternateWysiwygStringLiteral;",
-				//[`"`]: "lexDoubleQuotedStringLiteral;",
-				//[`r"`]: "lexWysiwygStringLiteral;",
-				//[`x"`]: "lexHexStringLiteral;",
-				//[`q"`]: "lexDelimitedStringLiteral;",
-				//["q{"]: "lexTokenStringLiteral;",
-				//["'"]: "lexSingleQuotedCharacterLiteral;",
-				//["0b", "0B"]: "lexBinaryNumberLiteral;",
-				//["0x", "0X"]: "lexHexNumberLiteral;",
-				//["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"]: "lexDecimalNumberLiteral;",
-				//["#"]: "lexSpecialTokenSequence;",
-			]
-		);
-	}
-
-	private struct Rule {
-		dstring code;
-		Rule[dchar] choices;
-
-		void insert(dstring charSequence, dstring code) {
+		CodeGenerator on(string charSequence, string code) {
 			if (charSequence.length == 0) {
 				this.code = code;
 			} else {
-				if (charSequence[0] !in choices) choices[charSequence[0]] = Rule();
-				choices[charSequence[0]].insert(charSequence[1..$], code);
+				getCodeGeneratorForChar(charSequence[0]).on(charSequence[1..$], code);
 			}
+			return this;
 		}
 
-		dstring generateCode(int depth = 0) {
-			dstring result = "";
-			foreach (key, value; choices) {
-				result ~= to!dstring(format("if(code[position+%d]=='\\U%08X'){%s}else ",
-						depth, key, choices[to!dchar(key)].generateCode(depth+1)));
+		CodeGenerator on(string charSequence)(string code) {
+			return on(charSequence, code);
+		}
+
+		CodeGenerator onWhitespace(string code) {
+			getCodeGeneratorForCase(
+				`case'\u0020':` ~
+				`case'\u0009':` ~
+				`case'\u000B':` ~
+				`case'\u000C':`
+			).code = code;
+			return this;
+		}
+
+		CodeGenerator onEndOfLine(string code) {
+			getCodeGeneratorForCase(
+				`case'\u000D':` ~
+					`if (code[position] == '\u000A') position++;` ~
+				`case'\u000A':` ~
+				`case'\u2028':` ~
+				`case'\u2029':`
+			).code = code;
+			return this;
+		}
+
+		CodeGenerator onEndOfFile(string code) {
+			getCodeGeneratorForCase(
+				`case'\u0000':` ~
+				`case'\u001A':`
+			).code = code;
+			on!"__EOF__"(code);
+			return this;
+		}
+
+		CodeGenerator onDigit(string code) {
+			getCodeGeneratorForCase(`case'0':..case'9':`).code = code;
+			return this;
+		}
+
+		CodeGenerator onNonZeroDigit(string code) {
+			getCodeGeneratorForCase(`case'1':..case'9':`).code = code;
+			return this;
+		}
+
+
+		CodeGenerator withKeywords(alias keywords)() {
+			foreach (keyword; keywords) {
+				on(keyword, "lexKeywordOrIdentifier(Token.STATIC!`" ~ keyword ~ "`);");
 			}
-			return result ~ "{" ~ code ~ "}";
+			return this;
+		}
+
+		CodeGenerator withOperators(alias operators)() {
+			foreach (operator; operators) {
+				on(operator, "lexStaticToken(Token.STATIC!`" ~ operator ~ "`);");
+			}
+			return this;
+		}
+
+
+		private CodeGenerator getCasesWithIsIdentifierChar(bool boolValue) {
+			auto result = new CodeGenerator;
+			result.code = code;
+			foreach (key, value; cases) {
+				if (value.previousCharWasFirstIdentifierChar == boolValue) result.cases[key] = value;
+			}
+			return result;
+		}
+
+		CodeGenerator getCasesThatStartWithFirstIdentifierChar() {
+			return getCasesWithIsIdentifierChar(true);
+		}
+
+		CodeGenerator getCasesThatDoNotStartWithFirstIdentifierChar() {
+			return getCasesWithIsIdentifierChar(false);
+		}
+
+
+		string generateCode(string onNoMatch) const {
+			auto result = "";
+			if (cases.length == 0) {
+				result = code.length > 0 ? code : onNoMatch;
+			} else {
+				result = "switch(code[position++]){";
+				foreach (key, value; cases) {
+					result ~= key ~ value.generateCode(onNoMatch) ~ "break;";
+				}
+				result ~= "default:position--;" ~ (code.length > 0 ? code : onNoMatch);
+				result ~= "}";
+			}
+			return result;
 		}
 	}
 
-	private static dstring generateCode(dstring[] staticTokens, dstring[dstring[]] lexRules) {
-		Rule identifiersAndKeywords;
-		Rule operatorsAndLiterals;
 
-		void add(dstring charSequence, dstring code) {
-			if (isIdentifierFirstChar(charSequence[0])) {
-				identifiersAndKeywords.insert(charSequence, code);
-			} else {
-				operatorsAndLiterals.insert(charSequence, code);
-			}
-		}
-
-		foreach (charSequences, code; lexRules) {
-			foreach (charSequence; charSequences) {
-				add(charSequence, code ~ "break;");
-			}
-		}
-		foreach (charSequence; staticTokens) {
-			add(
-				charSequence,
-				to!dstring(format(
-					"if (!isIdentifierChar(code[position+%d])){" ~
-						"currentToken.type=Token.STATIC!`%s`;" ~
-						"position+=%d;" ~
-						"break;" ~
-					"}",
-					charSequence.length, charSequence, charSequence.length
-				))
-			);
-		}
-
+	private static string generateLexerCode() {
 		return
-			"if(isIdentifierFirstChar(code[position])){" ~
-				"do{" ~
-					identifiersAndKeywords.generateCode ~
-					"lexIdentifier;" ~
-				"}while(0);" ~
-			"}else{" ~
-				"do{" ~
-					operatorsAndLiterals.generateCode ~
-					"lexUnknown;" ~
-				"}while(0);" ~
-			"}";
+			new CodeGenerator()
+				.withKeywords!keywords
+				.withOperators!operators
+
+				.on!"/*"("lexBlockComment;")
+				.on!"//"("lexLineComment;")
+				.on!"/+"("lexNestingBlockComment;")
+
+				.on!"#line"("lexLineSpecialTokenSequence;")
+
+				.on!`r"`("lexWysiwygStringLiteral;")
+				.on!"`"("lexAlternateWysiwygStringLiteral;")
+				.on!`"`("lexDoubleQuotedStringLiteral;")
+				.on!`x"`("lexHexStringLiteral;")
+				.on!`q"`("lexDelimitedStringLiteral;")
+				.on!"q{"("lexTokenStringLiteral;")
+
+				.on!"'"("lexSingleQuotedCharacterLiteral;")
+
+				.on!"0b"("lexBinaryNumberLiteral;")
+				.on!"0B"("lexBinaryNumberLiteral;")
+				.on!"0x"("lexHexNumberLiteral;")
+				.on!"0X"("lexHexNumberLiteral;")
+				.on!"0"("lexDecimalNumberLiteral;")
+				.onNonZeroDigit("lexDecimalNumberLiteral;")
+
+				.onEndOfFile("lexEofToken;")
+
+				.generateCode("lexIdentifier;");
+	}
+
+	private void lexWhitespaceChar() {
+		position++;
+	}
+
+	private void lexLineBreakOfLength(uint lengthInChars)() {
+		position += lengthInChars;
+		lineBeginPositions ~= position;
+	}
+
+	private void lexBlockComment() {
+		currentToken.type = Token.COMMENT;
+		position+=2;
+		while ((code[position] != '*') || (code[position+1] != '/')) {
+			position++;
+		}
+		currentToken.comment.value = code[currentToken.position+2 .. position];
+		position+=2;
+	}
+
+	private void lexLineComment() {
+		currentToken.type = Token.COMMENT;
+		position+=2;
+		do {
+			switch (code[position]) {   // TODO: move this code to LexerCodeGenerator.onLineBreak
+				case '\u000D':
+					if (code[position+1] == '\u000A') position++;
+					// fallthrough is intentional
+				case '\u000A':
+				case '\u2028':
+				case '\u2029':
+					currentToken.comment.value = code[currentToken.position+2 .. position];
+					position++;
+					break;
+				default:
+					continue;
+			}
+		} while (0);
+	}
+
+	private void lexNestingBlockComment() {
+		currentToken.type = Token.COMMENT;
+		assert(0);
+	}
+
+	private void lexLineSpecialTokenSequence() {
+		assert(0);
+	}
+
+	private void lexKeywordOrIdentifier(ubyte type) {
+		if (isIdentifierChar(code[position])) {
+			lexIdentifier;
+		} else {
+			lexStaticToken(type);
+		}
+	}
+
+	private void lexStaticToken(ubyte type) {
+		currentToken.type = type;
+	}
+
+	private void lexWysiwygStringLiteral() {
+		currentToken.type = Token.STRING_LITERAL;
+		assert(0);
+	}
+
+	private void lexAlternateWysiwygStringLiteral() {
+		currentToken.type = Token.STRING_LITERAL;
+		assert(0);
+	}
+
+	private void lexDoubleQuotedStringLiteral() {
+		currentToken.type = Token.STRING_LITERAL;
+		assert(0);
+	}
+
+	private void lexHexStringLiteral() {
+		currentToken.type = Token.STRING_LITERAL;
+		assert(0);
+	}
+
+	private void lexDelimitedStringLiteral() {
+		currentToken.type = Token.STRING_LITERAL;
+		assert(0);
+	}
+
+	private void lexTokenStringLiteral() {
+		currentToken.type = Token.STRING_LITERAL;
+		assert(0);
+	}
+
+	private void lexSingleQuotedCharacterLiteral() {
+		currentToken.type = Token.CHARACTER_LITERAL;
+		assert(0);
+	}
+
+	private void lexBinaryNumberLiteral() {
+		currentToken.type = Token.INTEGER_LITERAL;
+		assert(0);
+	}
+
+	private void lexHexNumberLiteral() {
+		currentToken.type = Token.INTEGER_LITERAL;
+		assert(0);
+	}
+
+	private void lexDecimalNumberLiteral() {
+		currentToken.type = Token.INTEGER_LITERAL;
+		assert(0);
 	}
 
 	private void lexEofToken() {
@@ -179,9 +408,9 @@ if(isIdentifierFirstChar(code[position])){do{if(code[position+0]=='\U0000005F'){
 
 	private void lexIdentifier() {
 		currentToken.type = Token.IDENTIFIER;
-		do {
+		while (isIdentifierChar(code[position])) {
 			position++;
-		} while (isIdentifierChar(code[position]));
+		}
 	}
 
 	private void lexUnknown() {
@@ -190,28 +419,28 @@ if(isIdentifierFirstChar(code[position])){do{if(code[position+0]=='\U0000005F'){
 	}
 
 	private void skipWhitespaceLineBreaksAndComments() {
-			while (true) {
-				switch (code[position]) {
-					case '\u000D':
-					case '\u000A':
-					case '\u2028':
-					case '\u2029':
-					case '\u0020':
-					case '\u0009':
-					case '\u000B':
-					case '\u000C':
-						break;
-					//case '/':
-					//	switch (code[position+1]) {
-					//		case '/': skipLineComment();
-					//		case '*': skipBlockComment();
-					//		case '+': skipNestingBlockComment();
-					//		default: return;
-					//	}
-					default: return;
-				}
-				position++;
+		while (true) {
+			switch (code[position]) {
+				case '\u000D':
+				case '\u000A':
+				case '\u2028':
+				case '\u2029':
+				case '\u0020':
+				case '\u0009':
+				case '\u000B':
+				case '\u000C':
+					break;
+				//case '/':
+				//	switch (code[position+1]) {
+				//		case '/': skipLineComment();
+				//		case '*': skipBlockComment();
+				//		case '+': skipNestingBlockComment();
+				//		default: return;
+				//	}
+				default: return;
 			}
+			position++;
+		}
 	}
 
 	private static bool isIdentifierChar(dchar c) {
@@ -226,12 +455,8 @@ if(isIdentifierFirstChar(code[position])){do{if(code[position+0]=='\U0000005F'){
 		return !isIdentifierFirstChar(c);
 	}
 
-	private enum staticTokens = [
-		",", ".", "..", "...", "/", "/=", "!", "!<", "!<=", "!<>", "!<>=", "!=",
-		"!>", "!>=", "$", "%", "%=", "&", "&&", "&=", "(", ")", "*", "*=", "+", "++",
-		"+=", "-", "--", "-=", ":", ";", "<", "<<", "<<=", "<=", "<>", "<>=", "=",
-		"==", "=>", ">", ">=", ">>", ">>=", ">>>", ">>>=", "?", "@", "[", "]", "^",
-		"^=", "^^", "^^=", "{", "|", "|=", "||", "}", "~", "~=",
+
+	private enum keywords = [
 		"abstract", "alias", "align", "asm", "assert", "auto", "body", "bool",
 		"break", "byte", "case", "cast", "catch", "cdouble", "cent", "cfloat",
 		"dchar", "class", "const", "continue", "creal", "dchar", "debug", "default",
@@ -248,16 +473,28 @@ if(isIdentifierFirstChar(code[position])){do{if(code[position+0]=='\U0000005F'){
 		"volatile", "wchar", "while", "with", "__DATE__"/*, "__EOF__"*/, "__FILE__",
 		"__FUNCTION__", "__gshared", "__LINE__", "__MODULE__", "__parameters",
 		"__PRETTY_FUNCTION__", "__TIME__", "__TIMESTAMP__", "__traits", "__vector",
-		"__VENDOR__", "__VERSION__"
+		"__VENDOR__", "__VERSION__",
 	];
-}
+
+	private enum operators = [
+		",", ".", "..", "...", "/", "/=", "!", "!<", "!<=", "!<>", "!<>=", "!=",
+		"!>", "!>=", "$", "%", "%=", "&", "&&", "&=", "(", ")", "*", "*=", "+", "++",
+		"+=", "-", "--", "-=", ":", ";", "<", "<<", "<<=", "<=", "<>", "<>=", "=",
+		"==", "=>", ">", ">=", ">>", ">>=", ">>>", ">>>=", "?", "@", "[", "]", "^",
+		"^=", "^^", "^^=", "{", "|", "|=", "||", "}", "~", "~=",
+	];
+
+	private enum staticTokens = keywords ~ operators;
 
 
-unittest {
-	writeln(Lexer.Token.FLOAT_LITERAL);
-	writeln(Lexer.Token.STATIC!",");
-	writeln(Lexer.Token.STATIC!"__VERSION__");
+
+	unittest {
+		writeln(Lexer.Token.__LAST_DYNAMIC_TOKEN);
+		writeln(Lexer.Token.STATIC!(staticTokens[0]));
+		writeln(Lexer.Token.STATIC!(staticTokens[$-1]));
+	}
 }
+
 
 
 unittest {
@@ -266,11 +503,14 @@ unittest {
 
 	enum MAX_TOKENS_COUNT = 20;
 
+	uint testsCount = 0;
+	uint failedTestsCount = 0;
+
+	static string red(string s) { return "\033[31m" ~ s ~ "\033[0m"; }
+	static string green(string s) { return "\033[32m" ~ s ~ "\033[0m"; }
 
 	void test(dstring input, Lexer.Token[] expectedTokens) {
 
-		static string red(string s) { return "\033[31m" ~ s ~ "\033[0m"; }
-		static string green(string s) { return "\033[32m" ~ s ~ "\033[0m"; }
 		static string succesfulComparison(string expected, string actual) {
 			return green(expected) ~ " " ~ green(actual);
 		}
@@ -284,7 +524,7 @@ unittest {
 			string[] report;
 
 			string toString() {
-				return failed ? red("FAIL") ~ "\nq{\n" ~ to!string(input) ~ "\n}\n  " ~ report.join("\n  ") ~ "\n" : "";
+				return failed ? red("FAIL") ~ "\nq{\n" ~ to!string(input) ~ "\n}\n  " ~ report.join("\n  ") ~ "\n\n" : "";
 			}
 		}
 
@@ -350,6 +590,8 @@ unittest {
 					result.report ~= failedComparison("<end of list>", tokenToString(actual));
 				}
 			}
+			testsCount++;
+			if (result.failed) failedTestsCount++;
 			return result;
 		}
 
@@ -375,10 +617,10 @@ unittest {
 		}
 
 
-		//writeln(check(getTokens_foreach));
-		//writeln(check(getTokens_foreachWithCounter));
-		writeln(check(getTokens_manualFront));
-		//writeln(check(getTokens_manualMoveFront));
+		//write(check(getTokens_foreach));
+		//write(check(getTokens_foreachWithCounter));
+		write(check(getTokens_manualFront));
+		//write(check(getTokens_manualMoveFront));
 	}
 
 	void testMap(Lexer.Token[][dstring] map) {
@@ -451,4 +693,9 @@ unittest {
 	testMap(tokens);
 	testMap(whitespaceAndLineBreaks);
 	testMap(getAllCombinations(whitespaceAndLineBreaks, tokens, whitespaceAndLineBreaks, tokens, whitespaceAndLineBreaks));
+	if (failedTestsCount == 0) {
+		writeln(green("All " ~ to!string(testsCount) ~ " tests passed"));
+	} else {
+		writeln(red(to!string(failedTestsCount) ~ " tests failed"));
+	}
 }
