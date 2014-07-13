@@ -84,16 +84,21 @@ struct Lexer {
 			__LAST_DYNAMIC_TOKEN = 7
 		}
 		template STATIC(string s) {
-			static assert(staticTokens.countUntil(s) != -1);
-			enum STATIC = __LAST_DYNAMIC_TOKEN + 1 + staticTokens.countUntil(s);
+			enum STATIC = typeForStaticToken(s);
+		}
+		static ubyte typeForStaticToken(string s) {
+			assert(staticTokens.countUntil(s) != -1);
+			auto result = __LAST_DYNAMIC_TOKEN + 1 + staticTokens.countUntil(s);
+			assert(result < 256);
+			return cast(ubyte)result;
 		}
 	}
 
-	dstring code;
+	dstring code;     // TODO: InputRange
 	Token currentToken;
 
 	this(dstring code) {
-		this.code = code ~ 0 ~ 0;
+		this.code = code ~ 0;
 		popFront();
 	}
 
@@ -117,7 +122,33 @@ struct Lexer {
 	void popFront() {
 		skipWhitespaceLineBreaksAndComments();
 		currentToken.position = position;
-		mixin(generateLexerCode);
+		mixin(
+			new CodeGenerator()
+				.withKeywords!keywords
+				.withOperators!operators
+
+				.on!"/*"("lexBlockComment;")
+				.on!"//"("lexLineComment;")
+				.on!"/+"("lexNestingBlockComment;")
+
+				.on!"#line"("lexLineSpecialTokenSequence;")
+
+				.on!`r"`("lexWysiwygStringLiteral;")
+				.on!"`"("lexAlternateWysiwygStringLiteral;")
+				.on!`"`("lexDoubleQuotedStringLiteral;")
+				.on!`x"`("lexHexStringLiteral;")
+				.on!`q"`("lexDelimitedStringLiteral;")
+				.on!"q{"("lexTokenStringLiteral;")
+
+				.on!"'"("lexSingleQuotedCharacterLiteral;")
+
+				.on!"0"("lexNumberLiteralThatStartsWithZero;")
+				.onNonZeroDigit("lexDecimalNumberLiteral;")
+
+				.onEndOfFile("lexEofToken;")
+
+				.generateCode("lexIdentifier;")
+		);
 		currentToken.asString = code[currentToken.position .. position];
 	}
 
@@ -138,7 +169,7 @@ struct Lexer {
 	}
 
 
-	private class CodeGenerator {
+	class CodeGenerator {
 		private string code = "";
 		private CodeGenerator[string] cases;
 		private bool previousCharWasFirstIdentifierChar = false;
@@ -198,11 +229,6 @@ struct Lexer {
 			return this;
 		}
 
-		CodeGenerator onDigit(string code) {
-			getCodeGeneratorForCase(`case'0':..case'9':`).code = code;
-			return this;
-		}
-
 		CodeGenerator onNonZeroDigit(string code) {
 			getCodeGeneratorForCase(`case'1':..case'9':`).code = code;
 			return this;
@@ -258,62 +284,24 @@ struct Lexer {
 		}
 	}
 
-
-	private static string generateLexerCode() {
-		return
-			new CodeGenerator()
-				.withKeywords!keywords
-				.withOperators!operators
-
-				.on!"/*"("lexBlockComment;")
-				.on!"//"("lexLineComment;")
-				.on!"/+"("lexNestingBlockComment;")
-
-				.on!"#line"("lexLineSpecialTokenSequence;")
-
-				.on!`r"`("lexWysiwygStringLiteral;")
-				.on!"`"("lexAlternateWysiwygStringLiteral;")
-				.on!`"`("lexDoubleQuotedStringLiteral;")
-				.on!`x"`("lexHexStringLiteral;")
-				.on!`q"`("lexDelimitedStringLiteral;")
-				.on!"q{"("lexTokenStringLiteral;")
-
-				.on!"'"("lexSingleQuotedCharacterLiteral;")
-
-				.on!"0b"("lexBinaryNumberLiteral;")
-				.on!"0B"("lexBinaryNumberLiteral;")
-				.on!"0x"("lexHexNumberLiteral;")
-				.on!"0X"("lexHexNumberLiteral;")
-				.on!"0"("lexDecimalNumberLiteral;")
-				.onNonZeroDigit("lexDecimalNumberLiteral;")
-
-				.onEndOfFile("lexEofToken;")
-
-				.generateCode("lexIdentifier;");
-	}
-
-	private void lexWhitespaceChar() {
-		position++;
-	}
-
-	private void lexLineBreakOfLength(uint lengthInChars)() {
-		position += lengthInChars;
-		lineBeginPositions ~= position;
-	}
-
 	private void lexBlockComment() {
 		currentToken.type = Token.COMMENT;
-		position+=2;
 		while ((code[position] != '*') || (code[position+1] != '/')) {
 			position++;
 		}
 		currentToken.comment.value = code[currentToken.position+2 .. position];
-		position+=2;
+		position += 2;
 	}
 
 	private void lexLineComment() {
 		currentToken.type = Token.COMMENT;
-		position+=2;
+		position += 2;
+		//while (true) {
+		//	new CodeGenerator()
+		//		.onLineBreak("if(code[position]=='/')")
+		//}
+
+
 		do {
 			switch (code[position]) {   // TODO: move this code to LexerCodeGenerator.onLineBreak
 				case '\u000D':
@@ -337,7 +325,7 @@ struct Lexer {
 	}
 
 	private void lexLineSpecialTokenSequence() {
-		assert(0);
+		assert(0); // TODO: move to skipWhitespaceAndLineBreaks?
 	}
 
 	private void lexKeywordOrIdentifier(ubyte type) {
@@ -384,6 +372,11 @@ struct Lexer {
 
 	private void lexSingleQuotedCharacterLiteral() {
 		currentToken.type = Token.CHARACTER_LITERAL;
+		assert(0);
+	}
+
+	private void lexNumberLiteralThatStartsWithZero() {
+		currentToken.type = Token.INTEGER_LITERAL;
 		assert(0);
 	}
 
@@ -459,7 +452,7 @@ struct Lexer {
 	private enum keywords = [
 		"abstract", "alias", "align", "asm", "assert", "auto", "body", "bool",
 		"break", "byte", "case", "cast", "catch", "cdouble", "cent", "cfloat",
-		"dchar", "class", "const", "continue", "creal", "dchar", "debug", "default",
+		"char", "class", "const", "continue", "creal", "dchar", "debug", "default",
 		"delegate", "delete", "deprecated", "do", "double", "else", "enum",
 		"export", "extern", "false", "final", "finally", "float", "for", "foreach",
 		"foreach_reverse", "function", "goto", "idouble", "if", "ifloat",
@@ -470,7 +463,7 @@ struct Lexer {
 		"static", "struct", "super", "switch", "synchronized", "template", "this",
 		"throw", "true", "try", "typedef", "typeid", "typeof", "ubyte", "ucent",
 		"uint", "ulong", "union", "unittest", "ushort", "version", "virtual", "void",
-		"volatile", "wchar", "while", "with", "__DATE__"/*, "__EOF__"*/, "__FILE__",
+		"volatile", "wchar", "while", "with", "__DATE__", "__EOF__", "__FILE__",
 		"__FUNCTION__", "__gshared", "__LINE__", "__MODULE__", "__parameters",
 		"__PRETTY_FUNCTION__", "__TIME__", "__TIMESTAMP__", "__traits", "__vector",
 		"__VENDOR__", "__VERSION__",
@@ -487,7 +480,6 @@ struct Lexer {
 	private enum staticTokens = keywords ~ operators;
 
 
-
 	unittest {
 		writeln(Lexer.Token.__LAST_DYNAMIC_TOKEN);
 		writeln(Lexer.Token.STATIC!(staticTokens[0]));
@@ -495,207 +487,3 @@ struct Lexer {
 	}
 }
 
-
-
-unittest {
-
-	import std.range : lockstep;
-
-	enum MAX_TOKENS_COUNT = 20;
-
-	uint testsCount = 0;
-	uint failedTestsCount = 0;
-
-	static string red(string s) { return "\033[31m" ~ s ~ "\033[0m"; }
-	static string green(string s) { return "\033[32m" ~ s ~ "\033[0m"; }
-
-	void test(dstring input, Lexer.Token[] expectedTokens) {
-
-		static string succesfulComparison(string expected, string actual) {
-			return green(expected) ~ " " ~ green(actual);
-		}
-		static string failedComparison(string expected, string actual) {
-			return green(expected) ~ " " ~ red(actual);
-		}
-
-		struct TestResult {
-			string name;
-			bool failed = false;
-			string[] report;
-
-			string toString() {
-				return failed ? red("FAIL") ~ "\nq{\n" ~ to!string(input) ~ "\n}\n  " ~ report.join("\n  ") ~ "\n\n" : "";
-			}
-		}
-
-		bool tokensAreEqual(Lexer.Token a, Lexer.Token b) {
-			if ((a.type != b.type) || (a.asString != b.asString) || (a.position != b.position)) return false;
-			if ((a.type == Lexer.Token.STRING_LITERAL) && (a.stringLiteral != b.stringLiteral)) return false;
-			if ((a.type == Lexer.Token.CHARACTER_LITERAL) && (a.characterLiteral != b.characterLiteral)) return false;
-			if ((a.type == Lexer.Token.INTEGER_LITERAL) && (a.integerLiteral != b.integerLiteral)) return false;
-			if ((a.type == Lexer.Token.FLOAT_LITERAL) && (a.floatLiteral != b.floatLiteral)) return false;
-			return true;
-		}
-
-		string tokenToString(Lexer.Token token) {
-			string type = to!string(token.type);
-			string typeSpecific = "";
-			if (token.type == Lexer.Token.UNKNOWN) type = "unknown";
-			if (token.type == Lexer.Token.END_OF_FILE) type = "endOfFile";
-			if (token.type == Lexer.Token.IDENTIFIER) type = "identifier";
-			if (token.type == Lexer.Token.STRING_LITERAL) {
-				type = "stringLiteral";
-				typeSpecific = ` "` ~ to!string(token.stringLiteral.value) ~ '"';
-			}
-			if (token.type == Lexer.Token.CHARACTER_LITERAL) {
-				type = "characterLiteral";
-				typeSpecific = to!string(" '"d ~ token.characterLiteral.value ~ "'");
-			}
-			if (token.type == Lexer.Token.INTEGER_LITERAL) {
-				type = "integerLiteral";
-				typeSpecific = " " ~ to!string(token.integerLiteral.value);
-			}
-			if (token.type == Lexer.Token.FLOAT_LITERAL) {
-				typeSpecific = " (" ~ to!string(token.floatLiteral.mantissa) ~ ", " ~
-					to!string(token.floatLiteral.exponent) ~ ")";
-			}
-			return format("%s(%d|%d:%d - %d|%d:%d \"%s\"%s)",
-				type,
-				token.position, 0, 0,
-				token.position + token.asString.length, 0, 0,
-				token.asString,
-				typeSpecific
-			);
-		}
-
-		TestResult check(Lexer.Token[] actualTokens) {
-			TestResult result;
-			foreach (expected, actual; lockstep(expectedTokens, actualTokens)) {
-				if (tokensAreEqual(expected, actual)) {
-					result.report ~= succesfulComparison(tokenToString(expected), tokenToString(actual));
-				} else {
-					result.failed = true;
-					result.report ~= failedComparison(tokenToString(expected), tokenToString(actual));
-				}
-			}
-			if (expectedTokens.length > actualTokens.length) {
-				result.failed = true;
-				foreach (expected; expectedTokens[actualTokens.length..$]) {
-					result.report ~= failedComparison(tokenToString(expected), "<end of list>");
-				}
-			}
-			if (expectedTokens.length < actualTokens.length) {
-				result.failed = true;
-				foreach (actual; actualTokens[expectedTokens.length..$]) {
-					result.report ~= failedComparison("<end of list>", tokenToString(actual));
-				}
-			}
-			testsCount++;
-			if (result.failed) failedTestsCount++;
-			return result;
-		}
-
-		//Lexer.Token[] getTokens_foreach() {
-		//	Lexer.Token[] result;
-		//	auto lexer = new Lexer(input);
-		//	foreach (token; lexer) {
-		//		result ~= token;
-		//	}
-		//	return result;
-		//}
-
-		Lexer.Token[] getTokens_manualFront() {
-			Lexer.Token[] result;
-			auto lexer = new Lexer(input);
-			uint i = 0;
-			while (!lexer.empty && i < MAX_TOKENS_COUNT) {
-				result ~= lexer.front;
-				lexer.popFront;
-				i++;
-			}
-			return result;
-		}
-
-
-		//write(check(getTokens_foreach));
-		//write(check(getTokens_foreachWithCounter));
-		write(check(getTokens_manualFront));
-		//write(check(getTokens_manualMoveFront));
-	}
-
-	void testMap(Lexer.Token[][dstring] map) {
-		foreach (key, value; map) {
-			test(key, value);
-		}
-	}
-
-
-	Lexer.Token[][dstring] _getAllCombinations(Lexer.Token[][dstring][] elements, uint positionIncrement) {
-		if (elements.length == 0) return Lexer.Token[][dstring].init;
-		if (elements.length == 1) return elements[0];
-		Lexer.Token[][dstring] merged;
-		foreach (input1, expected1; elements[0]) {
-			foreach (input2, expected2; elements[1]) {
-				if (expected2.length > 0) {
-					expected2[0].position = positionIncrement + input1.length;
-					for (uint i = 1; i < expected2.length; i++) {
-						expected2[i].position = positionIncrement + expected2[i-1].position + expected2[i-1].asString.length;
-					}
-				}
-				merged[input1 ~ input2] = expected1 ~ expected2;
-			}
-		}
-		return _getAllCombinations(merged ~ elements[2..$], positionIncrement);
-	}
-
-	Lexer.Token[][dstring] getAllCombinations(Lexer.Token[][dstring][] elements...) {
-		return _getAllCombinations(elements, 0);
-	}
-
-
-	Lexer.Token[][dstring] merge(Lexer.Token[][dstring][] elements...) {
-		Lexer.Token[][dstring] merged;
-		foreach (map; elements) {
-			foreach (key, value; map) {
-				merged[key] = value;
-			}
-		}
-		return merged;
-	}
-
-
-	auto keyword(string s)() {
-		return Lexer.Token(s, 0, Lexer.Token.STATIC!s);
-	}
-	auto identifier(string s)() {
-		return Lexer.Token(s, 0, Lexer.Token.IDENTIFIER);
-	}
-
-	auto tokens = [
-		"abstract"d: [keyword!"abstract"],
-
-		"abstract1"d: [identifier!"abstract1"],
-		"abstractalias"d: [identifier!"abstractalias"],
-		"_abstract"d: [identifier!"_abstract"],
-		"_1"d: [identifier!"_1"],
-		"_"d: [identifier!"_"],
-		"_01234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM"d: [identifier!"_01234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM"],
-	];
-
-	Lexer.Token[][dstring] whitespaceAndLineBreaks = [
-		" "d: [],
-
-		"\n"d: [],
-
-		//""d: [],
-	];
-
-	testMap(tokens);
-	testMap(whitespaceAndLineBreaks);
-	testMap(getAllCombinations(whitespaceAndLineBreaks, tokens, whitespaceAndLineBreaks, tokens, whitespaceAndLineBreaks));
-	if (failedTestsCount == 0) {
-		writeln(green("All " ~ to!string(testsCount) ~ " tests passed"));
-	} else {
-		writeln(red(to!string(failedTestsCount) ~ " tests failed"));
-	}
-}
