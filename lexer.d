@@ -8,25 +8,46 @@ import std.ascii;
 import std.stdio;
 
 
+
+// TODO: use currentChar, nextChar, advance и пр.
+
+
+
 struct Lexer {
 
 	struct Comment {
 		dstring asString;
 		ulong position;
-		Type type;
-		bool isDdoc;
 
-		enum Type {
+		enum Type : ubyte {
 			UNKNOWN,
 			BLOCK,
 			LINE,
 			NESTING_BLOCK,
 		}
 
-		dstring text() {
+		Type type() const {
+			if (asString.length < 2) return Type.UNKNOWN;
+			switch (asString[1]) {
+				case '*': return Type.BLOCK;
+				case '/': return Type.LINE;
+				case '+': return Type.NESTING_BLOCK;
+				default: return Type.UNKNOWN;
+			}
+		}
+
+		dstring text() const {
 			uint startOffset = isDdoc ? 3 : 2;
 			uint endOffset = type == Type.LINE ? 1 : 2;
 			return asString[startOffset .. $-endOffset];
+		}
+
+		bool isDdoc() const {
+			if (text.length == 0) return false;
+			if (type == Type.BLOCK) return text[0] == '*';
+			if (type == Type.LINE) return text[0] == '/';
+			if (type == Type.NESTING_BLOCK) return text[0] == '+';
+			return false;
 		}
 	}
 
@@ -41,13 +62,6 @@ struct Lexer {
 			ushort code;
 		}
 		union {
-			struct {
-				StringLiteralType stringLiteralType;
-				CharWidth charWidth;
-			}
-			NumberLiteralType numberLiteralType;
-		}
-		union {
 			Empty unknown;
 			Empty identifier;
 			dstring stringLiteral;
@@ -59,10 +73,37 @@ struct Lexer {
 		};
 		Comment[] precedingComments;
 
+		bool empty() const {
+			return asString.length == 0;
+		}
+
+		StringLiteralType stringLiteralType() const {
+			if (asString.length >= 2) {
+				if (asString[0] == 'r') return StringLiteralType.WYSIWYG;
+				if (asString[0] == '`') return StringLiteralType.ALTERNATE_WYSIWYG;
+				if (asString[0] == '"') return StringLiteralType.DOUBLE_QUOTED;
+				if (asString[0] == 'x') return StringLiteralType.HEX;
+				if (asString[0] == 'q') {
+					if (asString[1] == '"') return StringLiteralType.DELIMITED;
+					if (asString[1] == '{') return StringLiteralType.TOKEN;
+				}
+			}
+			return StringLiteralType.UNKNOWN;
+		}
+
+		CharWidth charWidth() const {
+			if (empty) return CharWidth.UNKNOWN;
+			if (asString[$-1] == 'c') return CharWidth.ONE_BYTE;
+			if (asString[$-1] == 'w') return CharWidth.TWO_BYTES;
+			if (asString[$-1] == 'd') return CharWidth.FOUR_BYTES;
+			return CharWidth.ONE_BYTE;
+		}
+
 		struct Empty {}
 		struct NumberLiteral {
 			BigInt mantissa;
 			long exponent;
+			NumberLiteralType numberLiteralType;
 		}
 
 		enum Type : ubyte {
@@ -113,94 +154,6 @@ struct Lexer {
 			return cast(ubyte)result;
 		}
 	}
-
-
-/*
-	struct Token {
-		struct Unknown {
-			string errorMessage;
-			ubyte triedToParseAsType = UNKNOWN;
-		}
-
-		struct Comment {
-			enum Type {
-				BLOCK,
-				LINE,
-				NESTING_BLOCK,
-			}
-			dstring value;
-			Type type;
-		}
-
-		struct StringLiteral {
-			enum Type {
-				WYSIWYG,
-				ALTERNATE_WYSIWYG,
-				DOUBLE_QUOTED,
-				HEX,
-				DELIMITED,
-				TOKEN,
-			}
-			dstring value;
-			Type type;
-		}
-
-		struct CharacterLiteral {
-			dchar value;
-		}
-
-		struct IntegerLiteral {
-			BigInt value;
-			bool hasLongSuffix;
-			bool hasUnsignedSuffix;
-		}
-
-		struct FloatLiteral {
-			enum TypeSuffix {
-				NONE,
-				FLOAT,
-				REAL,
-			}
-			BigInt mantissa;
-			long exponent;
-			TypeSuffix typeSuffix;
-			bool hasImaginarySuffix;
-		}
-
-		dstring asString;
-		ulong position;
-
-		ubyte type;
-		union {
-			Unknown unknown;
-			Comment comment;
-			StringLiteral stringLiteral;
-			CharacterLiteral characterLiteral;
-			IntegerLiteral integerLiteral;
-			FloatLiteral floatLiteral;
-		}
-
-		enum {
-			UNKNOWN = 0,
-			COMMENT = 1,
-			IDENTIFIER = 2,
-			STRING_LITERAL = 3,
-			CHARACTER_LITERAL = 4,
-			INTEGER_LITERAL = 5,
-			FLOAT_LITERAL = 6,
-			END_OF_FILE = 7,
-			__LAST_DYNAMIC_TOKEN = 7
-		}
-		template STATIC(string s) {
-			enum STATIC = typeForStaticToken(s);
-		}
-		static ubyte typeForStaticToken(string s) {
-			assert(staticTokens.countUntil(s) != -1);
-			auto result = __LAST_DYNAMIC_TOKEN + 1 + staticTokens.countUntil(s);
-			assert(result < 256);
-			return cast(ubyte)result;
-		}
-	}*/
 
 	dstring code;     // TODO: InputRange
 	Token currentToken;
@@ -282,7 +235,7 @@ struct Lexer {
 	}
 
 
-	class CodeGenerator {
+	private class CodeGenerator {
 		private string code = "";
 		private CodeGenerator[string] cases;
 		private bool previousCharWasFirstIdentifierChar = false;
@@ -312,26 +265,26 @@ struct Lexer {
 			return on(charSequence, code);
 		}
 
-		CodeGenerator onWhitespace(string code) {
-			getCodeGeneratorForCase(
-				`case'\u0020':` ~
-				`case'\u0009':` ~
-				`case'\u000B':` ~
-				`case'\u000C':`
-			).code = code;
-			return this;
-		}
+		//CodeGenerator onWhitespace(string code) {
+		//	getCodeGeneratorForCase(
+		//		`case'\u0020':` ~
+		//		`case'\u0009':` ~
+		//		`case'\u000B':` ~
+		//		`case'\u000C':`
+		//	).code = code;
+		//	return this;
+		//}
 
-		CodeGenerator onEndOfLine(string code) {
-			getCodeGeneratorForCase(
-				`case'\u000D':` ~
-					`if (code[position] == '\u000A') position++;` ~
-				`case'\u000A':` ~
-				`case'\u2028':` ~
-				`case'\u2029':`
-			).code = code;
-			return this;
-		}
+		//CodeGenerator onEndOfLine(string code) {
+		//	getCodeGeneratorForCase(
+		//		`case'\u000D':` ~
+		//			`if (code[position] == '\u000A') position++;` ~
+		//		`case'\u000A':` ~
+		//		`case'\u2028':` ~
+		//		`case'\u2029':`
+		//	).code = code;
+		//	return this;
+		//}
 
 		CodeGenerator onEndOfFile(string code) {
 			getCodeGeneratorForCase(
@@ -358,6 +311,13 @@ struct Lexer {
 		CodeGenerator withOperators(alias operators)() {
 			foreach (operator; operators) {
 				on(operator, "lexOperator(Token.staticTokenIdFor(`" ~ operator ~ "`));");
+			}
+			return this;
+		}
+
+		CodeGenerator withEscapeSequences(dchar[string] escapeSequences) {
+			foreach (escapeSequence, c; escapeSequences) {
+				on(escapeSequence, format(`return'\x%08X';`, c));
 			}
 			return this;
 		}
@@ -397,67 +357,17 @@ struct Lexer {
 		}
 	}
 
-	private void lexBlockComment() {
-		//currentToken.type = Token.COMMENT;
-		//currentToken.comment.type = Token.Comment.Type.BLOCK;
-		assert(0);
-		//while ((code[position] != '*') || (code[position+1] != '/')) {
-		//	position++;
-		//}
-		//currentToken.comment.value = code[currentToken.position+2 .. position];
-		//position += 2;
-	}
-
-	private void lexLineComment() {
-		//currentToken.type = Token.COMMENT;
-		//currentToken.comment.type = Token.Comment.Type.LINE;
-		assert(0);
-		//while (true) {
-		//	switch (code[position++]) {
-		//		case '\u000D':
-		//			currentToken.comment.value = code[currentToken.position+2 .. position-1];
-		//			if (code[position] == '\u000A') position++;
-		//			return;
-		//		case '\u000A':
-		//		case '\u2028':
-		//		case '\u2029':
-		//			currentToken.comment.value = code[currentToken.position+2 .. position-1];
-		//			return;
-		//		default:
-		//	}
-		//};
-	}
-
-	private void lexNestingBlockComment() {
-		//currentToken.type = Token.COMMENT;
-		//currentToken.comment.type = Token.Comment.Type.NESTING_BLOCK;
-		assert(0);
-		//int depth = 1;
-		//while (depth > 0) {
-		//	if ((code[position] == '/') && (code[position+1] == '+')) {
-		//		depth++;
-		//		position += 2;
-		//	} else if ((code[position] == '+') && (code[position+1] == '/')) {
-		//		depth--;
-		//		position += 2;
-		//	} else {
-		//		position++;
-		//	}
-		//}
-		//currentToken.comment.value = code[currentToken.position+2 .. position-2];
-	}
-
-	private void lexLineSpecialTokenSequence() {
-		assert(0); // TODO: move to skipWhitespaceAndLineBreaks?
-	}
-
 	private void lexKeywordOrIdentifier(ubyte staticTokenId) {
 		if (isIdentifierChar(code[position])) {
 			lexIdentifier;
 		} else {
-			currentToken.type = Token.Type.KEYWORD;
-			currentToken.staticTokenId = staticTokenId;
+			lexKeyword(staticTokenId);
 		}
+	}
+
+	private void lexKeyword(ubyte staticTokenId) {
+		currentToken.type = Token.Type.KEYWORD;
+		currentToken.staticTokenId = staticTokenId;
 	}
 
 	private void lexOperator(ubyte staticTokenId) {
@@ -465,29 +375,72 @@ struct Lexer {
 		currentToken.staticTokenId = staticTokenId;
 	}
 
-	private void lexWysiwygStringLiteral() {
-		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteralType = Token.StringLiteralType.WYSIWYG;
-		while (code[position] != '"') position++;
-		currentToken.stringLiteral = code[currentToken.position+2 .. position];
+	private dstring lexWysiwygStringLiteralValue(dchar finishChar) {
+		dstring result;
+		while (code[position] != finishChar) {
+			result ~= code[position];
+			position++;
+		}
 		position++;
-		lexOptionalStringLiteralPostfix;
+		if ((code[position] == 'c') || (code[position] == 'w') || (code[position] == 'd')) position++;
+		return result;
+	}
+
+	private void lexGeneralWysiwygStringLiteral(Token.StringLiteralType stringLiteralType, dchar finishChar) {
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteral = lexWysiwygStringLiteralValue(finishChar);
+	}
+
+	private void lexWysiwygStringLiteral() {
+		lexGeneralWysiwygStringLiteral(Token.StringLiteralType.WYSIWYG, '"');
 	}
 
 	private void lexAlternateWysiwygStringLiteral() {
-		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteralType = Token.StringLiteralType.ALTERNATE_WYSIWYG;
-		while (code[position] != '`') position++;
-		currentToken.stringLiteral = code[currentToken.position+1 .. position];
-		position++;
-		lexOptionalStringLiteralPostfix;
+		lexGeneralWysiwygStringLiteral(Token.StringLiteralType.ALTERNATE_WYSIWYG, '`');
 	}
+
+	// returns dstring because escape sequence may contain more than one code point
+	// See HTML5 spec: http://www.w3.org/TR/html5/syntax.html#named-character-references
+	private dstring lexCharacterOrEscapeSequence() {
+		if (code[position++] == '\\') {
+
+			// need code generator with backtracking (if no match return to first symbol and return it)
+			//mixin(new CodeGenerator().withEscapeSequences().generateCode("return code[position-1];"));
+		}
+		return [code[position-1]];
+
+
+		//mixin(new CodeGenerator()
+		//	.withNamedCharacterEntities(namedCharacterEntities)
+		//	.on(`\`, "return lexReverseSlashEscapeSequence;")
+
+		//	\'
+		//	\"
+		//	\?
+		//	\\
+		//	\0
+		//	\a
+		//	\b
+		//	\f
+		//	\n
+		//	\r
+		//	\t
+		//	\v
+		//	\x HexDigit HexDigit
+		//	\ OctalDigit
+		//	\ OctalDigit OctalDigit
+		//	\ OctalDigit OctalDigit OctalDigit
+		//	\u HexDigit HexDigit HexDigit HexDigit
+		//	\U HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit
+		//	.generateCode("return code[position-1];")   // неправильно, во вложенных свичах попадание в default - ошибка
+		//)
+	}
+
+	//private dchar
 
 	private void lexDoubleQuotedStringLiteral() {
 		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteralType = Token.StringLiteralType.DOUBLE_QUOTED;
 		assert(0);
-		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexHexStringLiteral() {
@@ -499,7 +452,6 @@ struct Lexer {
 		}
 
 		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteralType = Token.StringLiteralType.HEX;
 		bool hexCharIsRemembered = false;
 		ushort c = 0;
 		while (code[position] != '"') {
@@ -516,12 +468,10 @@ struct Lexer {
 			position++;
 		}
 		position++;
-		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexDelimitedStringLiteral() {
 		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteralType = Token.StringLiteralType.DELIMITED;
 		dchar closingDelimiter;
 		switch (code[position++]) {
 			case '[': closingDelimiter = ']'; break;
@@ -535,18 +485,20 @@ struct Lexer {
 		}
 		currentToken.stringLiteral = code[currentToken.position+3 .. position];
 		position += 2;
-		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexTokenStringLiteral() {
 		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteralType = Token.StringLiteralType.TOKEN;
 		assert(0);
-		lexOptionalStringLiteralPostfix;
 	}
 
-	private void lexOptionalStringLiteralPostfix() {
-		// TODO
+	private Token.CharWidth lexCharWidthPostfix() {
+		switch (code[position]) {
+			case 'c': position++; return Token.CharWidth.ONE_BYTE;
+			case 'w': position++; return Token.CharWidth.TWO_BYTES;
+			case 'd': position++; return Token.CharWidth.FOUR_BYTES;
+			default: return Token.CharWidth.ONE_BYTE;
+		}
 	}
 
 	private void lexSingleQuotedCharacterLiteral() {
@@ -614,6 +566,61 @@ struct Lexer {
 			position++;
 		}
 	}
+
+	private void lexBlockComment() {
+		//currentToken.type = Token.COMMENT;
+		//currentToken.comment.type = Token.Comment.Type.BLOCK;
+		assert(0);
+		//while ((code[position] != '*') || (code[position+1] != '/')) {
+		//	position++;
+		//}
+		//currentToken.comment.value = code[currentToken.position+2 .. position];
+		//position += 2;
+	}
+
+	private void lexLineComment() {
+		//currentToken.type = Token.COMMENT;
+		//currentToken.comment.type = Token.Comment.Type.LINE;
+		assert(0);
+		//while (true) {
+		//	switch (code[position++]) {
+		//		case '\u000D':
+		//			currentToken.comment.value = code[currentToken.position+2 .. position-1];
+		//			if (code[position] == '\u000A') position++;
+		//			return;
+		//		case '\u000A':
+		//		case '\u2028':
+		//		case '\u2029':
+		//			currentToken.comment.value = code[currentToken.position+2 .. position-1];
+		//			return;
+		//		default:
+		//	}
+		//};
+	}
+
+	private void lexNestingBlockComment() {
+		//currentToken.type = Token.COMMENT;
+		//currentToken.comment.type = Token.Comment.Type.NESTING_BLOCK;
+		assert(0);
+		//int depth = 1;
+		//while (depth > 0) {
+		//	if ((code[position] == '/') && (code[position+1] == '+')) {
+		//		depth++;
+		//		position += 2;
+		//	} else if ((code[position] == '+') && (code[position+1] == '/')) {
+		//		depth--;
+		//		position += 2;
+		//	} else {
+		//		position++;
+		//	}
+		//}
+		//currentToken.comment.value = code[currentToken.position+2 .. position-2];
+	}
+
+	private void lexLineSpecialTokenSequence() {
+		assert(0); // TODO: move to skipWhitespaceAndLineBreaks?
+	}
+
 
 	private static bool isIdentifierChar(dchar c) {
 		return isIdentifierFirstChar(c) || ((c >= '0') && (c <= '9'));

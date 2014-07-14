@@ -160,26 +160,22 @@ private {
 		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.Type.IDENTIFIER)]);
 	}
 
-	TestCase stringLiteral(
-		Lexer.Token.StringLiteralType type,
-		Lexer.Token.CharWidth charWidth = Lexer.Token.CharWidth.ONE_BYTE
-	)(dstring code, dstring value) {
+	TestCase stringLiteral(dstring code, dstring value) {
 		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.STRING_LITERAL);
-		expected.stringLiteralType = type;
 		expected.stringLiteral = value;
 		return new TestCase(code, [expected]);
 	}
 
 	TestCase wysiwygStringLiteral(dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteralType.WYSIWYG)(`r"` ~ value ~ `"`, value);
+		return stringLiteral(`r"` ~ value ~ `"`, value);
 	}
 
 	TestCase alternateWysiwygStringLiteral(dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteralType.ALTERNATE_WYSIWYG)('`' ~ value ~ '`', value);
+		return stringLiteral('`' ~ value ~ '`', value);
 	}
 
 	TestCase doubleQuotedStringLiteral(dstring code, dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteralType.DOUBLE_QUOTED)('"' ~ value ~ '"', value);
+		return stringLiteral('"' ~ code ~ '"', value);
 	}
 
 	TestCase doubleQuotedStringLiteral(dstring code) {
@@ -187,15 +183,15 @@ private {
 	}
 
 	TestCase hexStringLiteral(dstring hexText, dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteralType.HEX)(`x"` ~ hexText ~ `"`, value);
+		return stringLiteral(`x"` ~ hexText ~ `"`, value);
 	}
 
 	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter) {
-		return stringLiteral!(Lexer.Token.StringLiteralType.DELIMITED)(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
+		return stringLiteral(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
 	}
 
 	TestCase tokenStringLiteral(dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteralType.TOKEN)("q{" ~ value ~ "}", value);
+		return stringLiteral("q{" ~ value ~ "}", value);
 	}
 
 	TestCase characterLiteral(Lexer.Token.CharWidth charWidth = Lexer.Token.CharWidth.ONE_BYTE)(
@@ -282,6 +278,17 @@ private {
 	enum identifierChars = firstIdentifierChars ~ "01234567890";
 
 }
+
+
+
+
+
+
+unittest {
+	writeln("Lexer.Comment.sizeof: ", Lexer.Comment.sizeof);
+	writeln("Lexer.Token.sizeof: ", Lexer.Token.sizeof);
+}
+
 
 
 //static TestCase[] lineCommentWithAllPossibleLineBreaks(dstring text) {
@@ -418,6 +425,8 @@ unittest {
 		"string literal with ŪŅİĆŌĐĒ symbols",
 	];
 
+	// TODO: test string and char postfixes ('c', 'w', 'd')
+
 	auto commonWysiwygStringLiteralTexts = commonStringLiteralTexts ~ [`\`];
 
 	auto wysiwygStringLiterals = casesOf!wysiwygStringLiteral(commonWysiwygStringLiteralTexts);
@@ -473,9 +482,9 @@ unittest {
 
 	test("Whitespace                           ", whitespaces);
 	test("End of line                          ", endOfLines);
-	//test("Comments / Block                     ", blockComments);
-	//test("Comments / Line                      ", lineComments);
-	//test("Comments / Nesting block             ", nestingBlockComments);
+//test("Comments / Block                     ", blockComments);
+//test("Comments / Line                      ", lineComments);
+//test("Comments / Nesting block             ", nestingBlockComments);
 //test("Special token sequences              ", specialTokenSequences);
 	test("Identifiers                          ", identifiers);
 	test("Literals / String / Wysiwyg          ", wysiwygStringLiterals);
