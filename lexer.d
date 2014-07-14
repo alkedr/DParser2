@@ -4,10 +4,265 @@ import std.bigint : BigInt;
 import std.algorithm : countUntil, map, join;
 import std.string : format;
 import std.conv : to;
+import std.ascii;
 import std.stdio;
 
 
 struct Lexer {
+
+
+	struct Token2 {
+		dstring asString;
+		ulong position;
+		private ushort typeAndSubtype;
+		private Literal literal;
+
+		Type type() {
+			return cast(Type)(typeAndSubtype & TYPE_MASK);
+		};
+
+		/// same as type() but each keyword and operator has it's own code
+		uint code() {
+			return typeAndSubtype & CODE_MASK;
+		}
+
+
+
+
+		//private static string generateLiteralPropertiesCode(Type type, string name) {
+		//	return format("
+		//		@property decltype(literal.%1$s) %1$s()
+		//		in { assert(type == Type.%2$s); }
+		//		body { return literal.%1$s; }
+
+		//		@property decltype(literal.%1$s) %1$s(decltype(literal.%1$s) newValue)
+		//		in { assert(type == Type.%2$s); }
+		//		body { return literal.%1$s = newValue; }",
+		//		name, type);
+		//}
+
+		//private static string generateTypeBitfieldEnumPropertiesCode(E)(Type type, string name, uint offset, uint width) {
+		//	return format("
+		//		@property %1$s %2$s()
+		//		in { assert(type == Type.%5$s); }
+		//		body { return cast(%1$s)(typeAndSubtype & %3$s); }
+
+		//		@property %1$s %2$s(%1$s newValue)
+		//		in { assert(type == Type.%5$s); }
+		//		body {
+		//			auto result = %2$s;
+		//			typeAndSubtype &= ~%3$s;
+		//			typeAndSubtype |= (newValue << %4$s);
+		//			return result;
+		//		}",
+		//		E.stringof, name, ((2 ^^ width) - 1) << offset, offset, type);
+		//}
+
+		//private static string generatePropertiesCode(Type type, string[] code) {
+		//	return code.map!(s => format(s, type)).join;
+		//}
+
+		//private static string bitfieldEnum(E)(string name, uint offset, uint width) {
+		//	return format("
+		//		@property %1$s %2$s()
+		//		in { assert(type == Type.%5$s); }
+		//		body { return cast(%1$s)(typeAndSubtype & %3$s); }
+
+		//		@property %1$s %2$s(%1$s newValue)
+		//		in { assert(type == Type.%5$s); }
+		//		body {
+		//			auto result = %2$s;
+		//			typeAndSubtype &= ~%3$s;
+		//			typeAndSubtype |= (newValue << %4$s);
+		//			return result;
+		//		}",
+		//		E.stringof, name, ((2 ^^ width) - 1) << offset, offset, "%1$s"
+		//	);
+		//}
+
+		//private static string literalValue(string name) {
+		//	return format("
+		//		@property typeof(literal.%1$s) %1$s()
+		//		in { assert(type == Type.%2$s); }
+		//		body { return literal.%1$s; }
+
+		//		@property typeof(literal.%1$s) %1$s(typeof(literal.%1$s) newValue)
+		//		in { assert(type == Type.%2$s); }
+		//		body { return literal.%1$s = newValue; }",
+		//		name, "%1$s"
+		//	);
+		//}
+
+		//mixin(generatePropertiesCode(Type.STRING_LITERAL, [
+		//	bitfieldEnum!StringLiteralType("stringLiteralType", 8, 8),
+		//	bitfieldEnum!StringLiteralType("stringLiteralCharWidth", 16, 8),
+		//	literalValue("stringValue"),
+		//]));
+
+		//mixin(generatePropertiesCode(Type.CHAR_LITERAL, [
+		//	bitfieldEnum!StringLiteralType("characterLiteralCharWidth", 16, 8),
+		//	literalValue("stringValue"),
+		//]));
+
+		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType(Type.STRING_LITERAL, "stringLiteralType", 8, 8));
+		//mixin(generateTypeBitfieldEnumPropertiesCode!CharWidth(Type.STRING_LITERAL, "stringLiteralCharWidth", 8, 8));
+		//mixin(generateLiteralPropertiesCode(Type.STRING_LITERAL, "stringLiteralCharWidth", 8, 8));
+		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType("stringLiteralType", 8, 8));
+		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType("stringLiteralType", 8, 8));
+		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType("stringLiteralType", 8, 8));
+
+
+		//@property StringLiteralType stringLiteralType() {
+		//	return subType!StringLiteralType;
+		//}
+		//@property StringLiteralType stringLiteralType(StringLiteralType newValue) {
+		//	return subType!StringLiteralType(newValue);
+		//}
+		//@property CharWidth stringLiteralCharWidth() { return charWidth; }
+		//@property dstring stringLiteralValue() { return literal.stringValue;}
+
+		CharWidth charLiteralCharWidth() { return charWidth; }
+
+		IntegerLiteralType integerLiteralType() { return subType!IntegerLiteralType; }
+		bool integerLiteralIsLong() {
+			return (integerLiteralType == IntegerLiteralType.LONG)
+			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
+		}
+		bool integerLiteralIsUnsigned() {
+			return (integerLiteralType == IntegerLiteralType.UNSIGNED)
+			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
+		}
+
+		FloatLiteralType floatLiteralType() {
+			return cast(FloatLiteralType)(typeAndSubtype & SUBTYPE_MASK);
+		}
+
+		union {
+			struct {
+				Type type;
+				ubyte staticTokenId;
+			}
+			ushort code;
+		}
+		union {
+			StringLiteralType stringLiteralType;
+			IntegerLiteralType stringLiteralType;
+			FloatLiteralType stringLiteralType;
+			CharWidth charWidth;
+		}
+		union {
+			dstring stringLiteralValue;
+			dchar characterLiteralValue;
+			BigInt integerLiteralValue;
+			struct {
+				BigInt floatLiteralMantissa;
+				long floatLiteralExponent;
+			}
+		};
+
+
+		private enum TYPE_MASK       = 0x0000F;
+		private enum CODE_MASK       = 0x00FFF;
+		private enum SUBTYPE_MASK    = 0x0F000;
+		private enum CHAR_WIDTH_MASK = 0xF0000;
+
+		private T subType(T)() {
+			return cast(T)(typeAndSubtype & SUBTYPE_MASK);
+		};
+
+		private CharWidth charWidth() {
+			return cast(CharWidth)(typeAndSubtype & CHAR_WIDTH_MASK);
+		};
+
+		enum Type : ubyte {
+			UNKNOWN,
+			IDENTIFIER,
+			STRING_LITERAL,
+			CHARACTER_LITERAL,
+			INTEGER_LITERAL,
+			FLOAT_LITERAL,
+			KEYWORD,
+			OPERATOR,
+		}
+
+		enum StringLiteralType {
+			UNKNOWN,
+			WYSIWYG,
+			ALTERNATE_WYSIWYG,
+			DOUBLE_QUOTED,
+			HEX,
+			DELIMITED,
+			TOKEN,
+		}
+
+		enum CharWidth : ubyte {
+			UNKNOWN,
+			ONE_BYTE,
+			TWO_BYTES,
+			FOUR_BYTES,
+		}
+
+		enum IntegerLiteralType : ubyte {
+			UNKNOWN,
+			INT,
+			LONG,
+			UNSIGNED,
+			LONG_UNSINGED,
+		}
+
+		enum FloatLiteralType : ubyte {
+			UNKNOWN,
+			FLOAT,
+			REAL,
+			IMAGINARY,
+			FLOAT_IMAGINARY,
+			REAL_IMAGINARY,
+		}
+
+		struct StringLiteral {
+			enum Type {
+				UNKNOWN,
+				WYSIWYG,
+				ALTERNATE_WYSIWYG,
+				DOUBLE_QUOTED,
+				HEX,
+				DELIMITED,
+				TOKEN,
+			}
+			dstring value;
+			Type type;
+		}
+
+		struct CharacterLiteral {
+			dchar value;
+		}
+
+		struct IntegerLiteral {
+			BigInt value;
+			bool hasLongSuffix;
+			bool hasUnsignedSuffix;
+		}
+
+		struct FloatLiteral {
+			enum TypeSuffix {
+				UNKNOWN,
+				NONE,
+				FLOAT,
+				REAL,
+			}
+			BigInt mantissa;
+			long exponent;
+			TypeSuffix typeSuffix;
+			bool hasImaginarySuffix;
+		}
+
+	}
+
+
+
+
+
+
 	struct Token {
 		struct Unknown {
 			string errorMessage;
@@ -98,6 +353,7 @@ struct Lexer {
 	Token currentToken;
 
 	this(dstring code) {
+		//writeln(code);
 		this.code = code ~ 0;
 		popFront();
 	}
@@ -286,6 +542,7 @@ struct Lexer {
 
 	private void lexBlockComment() {
 		currentToken.type = Token.COMMENT;
+		currentToken.comment.type = Token.Comment.Type.BLOCK;
 		while ((code[position] != '*') || (code[position+1] != '/')) {
 			position++;
 		}
@@ -295,33 +552,39 @@ struct Lexer {
 
 	private void lexLineComment() {
 		currentToken.type = Token.COMMENT;
-		position += 2;
-		//while (true) {
-		//	new CodeGenerator()
-		//		.onLineBreak("if(code[position]=='/')")
-		//}
-
-
-		do {
-			switch (code[position]) {   // TODO: move this code to LexerCodeGenerator.onLineBreak
+		currentToken.comment.type = Token.Comment.Type.LINE;
+		while (true) {
+			switch (code[position++]) {
 				case '\u000D':
-					if (code[position+1] == '\u000A') position++;
-					// fallthrough is intentional
+					currentToken.comment.value = code[currentToken.position+2 .. position-1];
+					if (code[position] == '\u000A') position++;
+					return;
 				case '\u000A':
 				case '\u2028':
 				case '\u2029':
-					currentToken.comment.value = code[currentToken.position+2 .. position];
-					position++;
-					break;
+					currentToken.comment.value = code[currentToken.position+2 .. position-1];
+					return;
 				default:
-					continue;
 			}
-		} while (0);
+		};
 	}
 
 	private void lexNestingBlockComment() {
 		currentToken.type = Token.COMMENT;
-		assert(0);
+		//currentToken.comment.type = Token.Comment.Type.NESTING_BLOCK;
+		int depth = 1;
+		while (depth > 0) {
+			if ((code[position] == '/') && (code[position+1] == '+')) {
+				depth++;
+				position += 2;
+			} else if ((code[position] == '+') && (code[position+1] == '/')) {
+				depth--;
+				position += 2;
+			} else {
+				position++;
+			}
+		}
+		currentToken.comment.value = code[currentToken.position+2 .. position-2];
 	}
 
 	private void lexLineSpecialTokenSequence() {
@@ -342,32 +605,86 @@ struct Lexer {
 
 	private void lexWysiwygStringLiteral() {
 		currentToken.type = Token.STRING_LITERAL;
-		assert(0);
+		currentToken.stringLiteral.type = Token.StringLiteral.Type.WYSIWYG;
+		while (code[position] != '"') position++;
+		currentToken.stringLiteral.value = code[currentToken.position+2 .. position];
+		position++;
+		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexAlternateWysiwygStringLiteral() {
 		currentToken.type = Token.STRING_LITERAL;
-		assert(0);
+		currentToken.stringLiteral.type = Token.StringLiteral.Type.ALTERNATE_WYSIWYG;
+		while (code[position] != '`') position++;
+		currentToken.stringLiteral.value = code[currentToken.position+1 .. position];
+		position++;
+		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexDoubleQuotedStringLiteral() {
 		currentToken.type = Token.STRING_LITERAL;
+		currentToken.stringLiteral.type = Token.StringLiteral.Type.DOUBLE_QUOTED;
 		assert(0);
+		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexHexStringLiteral() {
+		ubyte hexDigitToInt(dchar c) {
+			if (isDigit(code[position])) return cast(ubyte)(c - '0');
+			if (isLower(code[position])) return cast(ubyte)(c - 'a' + 10);
+			if (isUpper(code[position])) return cast(ubyte)(c - 'A' + 10);
+			throw new Exception("hexDigitToInt");
+		}
+
 		currentToken.type = Token.STRING_LITERAL;
-		assert(0);
+		currentToken.stringLiteral.type = Token.StringLiteral.Type.HEX;
+		bool hexCharIsRemembered = false;
+		ushort c = 0;
+		while (code[position] != '"') {
+			if (isHexDigit(code[position])) {
+				if (hexCharIsRemembered) {
+					currentToken.stringLiteral.value ~= ((c << 4) | hexDigitToInt(code[position]));
+					c = 0;
+					hexCharIsRemembered = false;
+				} else {
+					c = cast(ushort)(hexDigitToInt(code[position]));
+					hexCharIsRemembered = true;
+				}
+			}
+			position++;
+		}
+		position++;
+		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexDelimitedStringLiteral() {
 		currentToken.type = Token.STRING_LITERAL;
-		assert(0);
+		currentToken.stringLiteral.type = Token.StringLiteral.Type.DELIMITED;
+		dchar closingDelimiter;
+		switch (code[position++]) {
+			case '[': closingDelimiter = ']'; break;
+			case '(': closingDelimiter = ')'; break;
+			case '<': closingDelimiter = '>'; break;
+			case '{': closingDelimiter = '}'; break;
+			default : throw new Exception("unknown delimiter " ~ to!string(code[position-1]));
+		}
+		while ((code[position] != closingDelimiter) || (code[position+1] != '"')) {
+			position++;
+		}
+		currentToken.comment.value = code[currentToken.position+3 .. position];
+		position += 2;
+		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexTokenStringLiteral() {
 		currentToken.type = Token.STRING_LITERAL;
+		currentToken.stringLiteral.type = Token.StringLiteral.Type.TOKEN;
 		assert(0);
+		lexOptionalStringLiteralPostfix;
+	}
+
+	private void lexOptionalStringLiteralPostfix() {
+		// TODO
 	}
 
 	private void lexSingleQuotedCharacterLiteral() {

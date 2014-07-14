@@ -42,6 +42,8 @@ private {
 
 			bool tokensAreEqual(Lexer.Token a, Lexer.Token b) {
 				if ((a.type != b.type) || (a.asString != b.asString) || (a.position != b.position)) return false;
+				if ((a.type == Lexer.Token.UNKNOWN) && (a.unknown != b.unknown)) return false;
+				if ((a.type == Lexer.Token.COMMENT) && (a.comment != b.comment)) return false;
 				if ((a.type == Lexer.Token.STRING_LITERAL) && (a.stringLiteral != b.stringLiteral)) return false;
 				if ((a.type == Lexer.Token.CHARACTER_LITERAL) && (a.characterLiteral != b.characterLiteral)) return false;
 				if ((a.type == Lexer.Token.INTEGER_LITERAL) && (a.integerLiteral != b.integerLiteral)) return false;
@@ -49,10 +51,28 @@ private {
 				return true;
 			}
 
+			JSONValue structToJson(T)(T t) {
+				JSONValue[string] result;
+				foreach (fieldName; __traits(allMembers, T)) {
+					result[fieldName] = JSONValue(__traits(getMember, T, fieldName));
+				}
+				return JSONValue(result);
+			}
+
 			string tokenToString(Lexer.Token token) {
+				import std.json;
+				writeln(to!string(token));
+				auto t = parseJSON(to!string(token));
+				return toJSON(&t);
+
+/*
 				string type = to!string(token.type);
 				string typeSpecific = "";
 				if (token.type == Lexer.Token.UNKNOWN) type = "unknown";
+				if (token.type == Lexer.Token.COMMENT) {
+					type = "comment";
+					typeSpecific = ` ` ~ to!string(token.comment.type) ~ ` "` ~ to!string(token.comment.value) ~ `"`;
+				}
 				if (token.type == Lexer.Token.END_OF_FILE) type = "endOfFile";
 				if (token.type == Lexer.Token.IDENTIFIER) type = "identifier";
 				if (token.type == Lexer.Token.STRING_LITERAL) {
@@ -77,7 +97,7 @@ private {
 					token.position + token.asString.length, 0, 0,
 					token.asString,
 					typeSpecific
-				);
+				);*/
 			}
 
 			Lexer.Token[] getTokens_manualFront() {
@@ -198,8 +218,8 @@ private {
 		return stringLiteral!(Lexer.Token.StringLiteral.Type.HEX)(`x"` ~ hexText ~ `"`, value);
 	}
 
-	TestCase delimitedStringLiteral(dstring value, dstring delimiter) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.DELIMITED)(`q"` ~ delimiter ~ value ~ `"`, value);
+	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter) {
+		return stringLiteral!(Lexer.Token.StringLiteral.Type.DELIMITED)(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
 	}
 
 	TestCase tokenStringLiteral(dstring value) {
@@ -282,7 +302,7 @@ private {
 			}
 		}
 		if (failedTestsCount == 0) {
-			writeln(green(format("%s: all %d tests passed", suiteName, testCases.length)));
+			writeln(green(format("%s: %3d tests passed", suiteName, testCases.length)));
 		}
 		return failedTestsCount;
 	}
@@ -301,6 +321,15 @@ static TestCase[] lineCommentWithAllPossibleLineBreaks(dstring text) {
 		result ~= lineComment(text, endOfLine);
 	}
 	return result;
+}
+
+static TestCase[] delimitedStringLiteralWithAllPossibleDelimiters(dstring text) {
+	return [
+		delimitedStringLiteral(text, "(", ")"),
+		delimitedStringLiteral(text, "[", "]"),
+		delimitedStringLiteral(text, "<", ">"),
+		delimitedStringLiteral(text, "{", "}"),
+	];
 }
 
 
@@ -356,6 +385,7 @@ unittest {
 	auto endOfLines = casesOf!endOfLine(["\u000D", "\u000A", "\u000D\u000A", "\u2028", "\u2029"]);
 
 	auto commonCommentTexts = [
+		"",
 		"comment",
 		"comment with spaces",
 		"comment with ŪŅİĆŌĐĒ symbols",
@@ -413,6 +443,35 @@ unittest {
 		"Aabstract",
 	]);
 
+	auto commonStringLiteralTexts = [
+		"",
+		"string literal",
+		"string literal with ŪŅİĆŌĐĒ symbols",
+	];
+
+	auto commonWysiwygStringLiteralTexts = commonStringLiteralTexts ~ [`\`];
+
+	auto wysiwygStringLiterals = casesOf!wysiwygStringLiteral(commonWysiwygStringLiteralTexts);
+
+	auto alternateWysiwygStringLiterals = casesOf!alternateWysiwygStringLiteral(commonWysiwygStringLiteralTexts);
+
+	auto hexStringLiterals = [
+		hexStringLiteral("", ""),
+		hexStringLiteral("63", "c"),
+		hexStringLiteral(" 63", "c"),
+		hexStringLiteral("63 ", "c"),
+		hexStringLiteral("63\u000D ", "c"),
+		hexStringLiteral("63\u000A ", "c"),
+		hexStringLiteral("63\u000D\u000A ", "c"),
+		hexStringLiteral("63\u2028 ", "c"),
+		hexStringLiteral("63\u2029 ", "c"),
+		hexStringLiteral("636f6d6d656e74", "comment"),
+		hexStringLiteral("63 6f 6d 6d 65 6e 74", "comment"),
+		hexStringLiteral("63 6F 6D 6D 65 6E 74", "comment"),
+	];
+
+	auto delimitedStringLiterals = casesOf!delimitedStringLiteralWithAllPossibleDelimiters(commonWysiwygStringLiteralTexts);
+
 	auto keywords = casesOf!keyword([
 		"abstract", "alias", "align", "asm", "assert", "auto", "body", "bool",
 		"break", "byte", "case", "cast", "catch", "cdouble", "cent", "cfloat",
@@ -443,26 +502,26 @@ unittest {
 
 
 
-	test("Whitespace", whitespaces);
-	test("End of line", endOfLines);
-	test("Block comments", blockComments);
-	//test("Line comments", lineComments);
-	//test("Nesting block comments", nestingBlockComments);
-	//test("Special token sequences", specialTokenSequences);
-	test("Identifiers", identifiers);
-	//test("Wysiwyg string literals", wysiwygStringLiterals);
-	//test("Alternate wysiwyg string literals", alternateWysiwygStringLiterals);
-	//test("Double quoted string literals", doubleQuotedStringLiterals);
-	//test("Hex string literals", hexStringLiterals);
-	//test("Delimited string literals", delimitedStringLiterals);
-	//test("Token string literals", tokenStringLiterals);
-	//test("Character literals", characterLiterals);
-	//test("Decimal integer literals", decimalIntegerLiterals);
-	//test("Binary integer literals", binaryIntegerLiterals);
-	//test("Hexadecimal integer literals", hexIntegerLiterals);
-	//test("Decimal float literals", decimalFloatLiterals);
-	//test("Hexadecimal float literals", hexFloatLiterals);
-	//test("Imaginary float literals", imaginaryFloatLiterals);
-	test("Keywords", keywords);
-	test("Operators", operators);
+	test("Whitespace                           ", whitespaces);
+	test("End of line                          ", endOfLines);
+	test("Comments / Block                     ", blockComments);
+	test("Comments / Line                      ", lineComments);
+	test("Comments / Nesting block             ", nestingBlockComments);
+//test("Special token sequences              ", specialTokenSequences);
+	test("Identifiers                          ", identifiers);
+	test("Literals / String / Wysiwyg          ", wysiwygStringLiterals);
+	test("Literals / String / Alternate wysiwyg", alternateWysiwygStringLiterals);
+//test("Literals / String / Double quoted    ", doubleQuotedStringLiterals);
+	test("Literals / String / Hexadecimal      ", hexStringLiterals);
+	test("Literals / String / Delimited        ", delimitedStringLiterals);
+//test("Literals / String / Token            ", tokenStringLiterals);
+//test("Literals / Character                 ", characterLiterals);
+//test("Literals / Integer / Decimal         ", decimalIntegerLiterals);
+//test("Literals / Integer / Binary          ", binaryIntegerLiterals);
+//test("Literals / Integer / Hexadecimal     ", hexIntegerLiterals);
+//test("Literals / Float / Decimal           ", decimalFloatLiterals);
+//test("Literals / Float / Hexadecimal       ", hexFloatLiterals);
+//test("Literals / Float / Imaginary         ", imaginaryFloatLiterals);
+	test("Keywords                             ", keywords);
+	test("Operators                            ", operators);
 }
