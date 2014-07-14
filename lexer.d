@@ -156,13 +156,11 @@ struct Lexer {
 	}
 
 	dstring code;     // TODO: InputRange
-	Token currentToken;
 	void delegate(string errorMessage) errorCallback;
 
 	this(dstring code) {
 		//writeln(code);
 		this.code = code ~ 0;
-		popFront();
 	}
 
 	struct LineSpecialToken {
@@ -186,52 +184,35 @@ struct Lexer {
 
 	void popFront() {
 		skipWhitespaceLineBreaksAndComments();
-		currentToken = Token.init;
-		currentToken.position = position;
+		ulong startPosition = position;
 		mixin(
 			new CodeGenerator()
 				.withKeywords!keywords
 				.withOperators!operators
 
-				.on!"/*"("lexBlockComment;")
-				.on!"//"("lexLineComment;")
-				.on!"/+"("lexNestingBlockComment;")
+				//.on!"/*"("return lexBlockComment;")
+				//.on!"//"("return lexLineComment;")
+				//.on!"/+"("return lexNestingBlockComment;")
 
-				.on!"#line"("lexLineSpecialTokenSequence;")
+				//.on!"#line"("lexLineSpecialTokenSequence;")
 
-				.on!`r"`("lexWysiwygStringLiteral;")
-				.on!"`"("lexAlternateWysiwygStringLiteral;")
-				.on!`"`("lexDoubleQuotedStringLiteral;")
-				.on!`x"`("lexHexStringLiteral;")
-				.on!`q"`("lexDelimitedStringLiteral;")
-				.on!"q{"("lexTokenStringLiteral;")
+				.on!`r"`("return lexWysiwygStringLiteral(startPosition);")
+				.on!"`"("return lexAlternateWysiwygStringLiteral(startPosition);")
+				.on!`"`("return lexDoubleQuotedStringLiteral(startPosition);")
+				.on!`x"`("return lexHexStringLiteral(startPosition);")
+				.on!`q"`("return lexDelimitedStringLiteral(startPosition);")
+				.on!"q{"("return lexTokenStringLiteral(startPosition);")
 
-				.on!"'"("lexSingleQuotedCharacterLiteral;")
+				.on!"'"("return lexSingleQuotedCharacterLiteral(startPosition);")
 
-				.on!"0"("lexNumberLiteralThatStartsWithZero;")
-				.onNonZeroDigit("lexDecimalNumberLiteral;")
+				.on!"0"("return lexNumberLiteralThatStartsWithZero(startPosition);")
+				.onNonZeroDigit("return lexDecimalNumberLiteral(startPosition);")
 
-				.onEndOfFile("lexEofToken;")
+				.onEndOfFile("return lexEofToken(startPosition);")
 
-				.generateCode("lexIdentifier;")
+				.generateCode("return lexIdentifier(startPosition);")
 		);
-		currentToken.asString = code[currentToken.position .. position];
-	}
-
-	int opApply(int delegate(Token) f) {
-		return opApply((index, token) => f(token));
-	}
-
-	int opApply(int delegate(size_t, Token) f) {
-		int i = 0;
-		int result = 0;
-		while (!empty()) {
-			result = f(i, front());
-			if (result) break;
-			popFront();
-			i++;
-		}
-		return result;
+		//currentToken.asString = code[currentToken.position .. position];
 	}
 
 
@@ -303,14 +284,14 @@ struct Lexer {
 
 		CodeGenerator withKeywords(alias keywords)() {
 			foreach (keyword; keywords) {
-				on(keyword, "lexKeywordOrIdentifier(Token.staticTokenIdFor(`" ~ keyword ~ "`));");
+				on(keyword, "return lexKeywordOrIdentifier(startPosition, Token.staticTokenIdFor(`" ~ keyword ~ "`));");
 			}
 			return this;
 		}
 
 		CodeGenerator withOperators(alias operators)() {
 			foreach (operator; operators) {
-				on(operator, "lexOperator(Token.staticTokenIdFor(`" ~ operator ~ "`));");
+				on(operator, "return lexOperator(startPosition, Token.staticTokenIdFor(`" ~ operator ~ "`));");
 			}
 			return this;
 		}
@@ -357,7 +338,7 @@ struct Lexer {
 		}
 	}
 
-	private void lexKeywordOrIdentifier(ubyte staticTokenId) {
+	private Token lexKeywordOrIdentifier(ulong startPosition, ubyte staticTokenId) {
 		if (isIdentifierChar(code[position])) {
 			lexIdentifier;
 		} else {
@@ -365,12 +346,12 @@ struct Lexer {
 		}
 	}
 
-	private void lexKeyword(ubyte staticTokenId) {
+	private Token lexKeyword(ulong startPosition, ubyte staticTokenId) {
 		currentToken.type = Token.Type.KEYWORD;
 		currentToken.staticTokenId = staticTokenId;
 	}
 
-	private void lexOperator(ubyte staticTokenId) {
+	private Token lexOperator(ulong startPosition, ubyte staticTokenId) {
 		currentToken.type = Token.Type.OPERATOR;
 		currentToken.staticTokenId = staticTokenId;
 	}
@@ -386,16 +367,16 @@ struct Lexer {
 		return result;
 	}
 
-	private void lexGeneralWysiwygStringLiteral(Token.StringLiteralType stringLiteralType, dchar finishChar) {
+	private Token lexGeneralWysiwygStringLiteral(ulong startPosition, Token.StringLiteralType stringLiteralType, dchar finishChar) {
 		currentToken.type = Token.Type.STRING_LITERAL;
 		currentToken.stringLiteral = lexWysiwygStringLiteralValue(finishChar);
 	}
 
-	private void lexWysiwygStringLiteral() {
+	private Token lexWysiwygStringLiteral(ulong startPosition) {
 		lexGeneralWysiwygStringLiteral(Token.StringLiteralType.WYSIWYG, '"');
 	}
 
-	private void lexAlternateWysiwygStringLiteral() {
+	private Token lexAlternateWysiwygStringLiteral(ulong startPosition) {
 		lexGeneralWysiwygStringLiteral(Token.StringLiteralType.ALTERNATE_WYSIWYG, '`');
 	}
 
@@ -438,12 +419,12 @@ struct Lexer {
 
 	//private dchar
 
-	private void lexDoubleQuotedStringLiteral() {
+	private Token lexDoubleQuotedStringLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.STRING_LITERAL;
 		assert(0);
 	}
 
-	private void lexHexStringLiteral() {
+	private Token lexHexStringLiteral(ulong startPosition) {
 		ubyte hexDigitToInt(dchar c) {
 			if (isDigit(code[position])) return cast(ubyte)(c - '0');
 			if (isLower(code[position])) return cast(ubyte)(c - 'a' + 10);
@@ -470,7 +451,7 @@ struct Lexer {
 		position++;
 	}
 
-	private void lexDelimitedStringLiteral() {
+	private Token lexDelimitedStringLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.STRING_LITERAL;
 		dchar closingDelimiter;
 		switch (code[position++]) {
@@ -487,57 +468,48 @@ struct Lexer {
 		position += 2;
 	}
 
-	private void lexTokenStringLiteral() {
+	private Token lexTokenStringLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.STRING_LITERAL;
 		assert(0);
 	}
 
-	private Token.CharWidth lexCharWidthPostfix() {
-		switch (code[position]) {
-			case 'c': position++; return Token.CharWidth.ONE_BYTE;
-			case 'w': position++; return Token.CharWidth.TWO_BYTES;
-			case 'd': position++; return Token.CharWidth.FOUR_BYTES;
-			default: return Token.CharWidth.ONE_BYTE;
-		}
-	}
-
-	private void lexSingleQuotedCharacterLiteral() {
+	private Token lexSingleQuotedCharacterLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.CHARACTER_LITERAL;
 		assert(0);
 	}
 
-	private void lexNumberLiteralThatStartsWithZero() {
+	private Token lexNumberLiteralThatStartsWithZero(ulong startPosition) {
 		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
-	private void lexBinaryNumberLiteral() {
+	private Token lexBinaryNumberLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
-	private void lexHexNumberLiteral() {
+	private Token lexHexNumberLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
-	private void lexDecimalNumberLiteral() {
+	private Token lexDecimalNumberLiteral(ulong startPosition) {
 		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
-	private void lexEofToken() {
+	private Token lexEofToken(ulong startPosition) {
 		isEmpty = true;
 	}
 
-	private void lexIdentifier() {
+	private Token lexIdentifier(ulong startPosition) {
 		currentToken.type = Token.Type.IDENTIFIER;
 		while (isIdentifierChar(code[position])) {
 			position++;
 		}
 	}
 
-	private void lexUnknown() {
+	private Token lexUnknown(ulong startPosition) {
 		currentToken.type = Token.Type.UNKNOWN;
 		//position++;
 	}
