@@ -14,129 +14,6 @@ struct Lexer {
 	struct Token2 {
 		dstring asString;
 		ulong position;
-		private ushort typeAndSubtype;
-		private Literal literal;
-
-		Type type() {
-			return cast(Type)(typeAndSubtype & TYPE_MASK);
-		};
-
-		/// same as type() but each keyword and operator has it's own code
-		uint code() {
-			return typeAndSubtype & CODE_MASK;
-		}
-
-
-
-
-		//private static string generateLiteralPropertiesCode(Type type, string name) {
-		//	return format("
-		//		@property decltype(literal.%1$s) %1$s()
-		//		in { assert(type == Type.%2$s); }
-		//		body { return literal.%1$s; }
-
-		//		@property decltype(literal.%1$s) %1$s(decltype(literal.%1$s) newValue)
-		//		in { assert(type == Type.%2$s); }
-		//		body { return literal.%1$s = newValue; }",
-		//		name, type);
-		//}
-
-		//private static string generateTypeBitfieldEnumPropertiesCode(E)(Type type, string name, uint offset, uint width) {
-		//	return format("
-		//		@property %1$s %2$s()
-		//		in { assert(type == Type.%5$s); }
-		//		body { return cast(%1$s)(typeAndSubtype & %3$s); }
-
-		//		@property %1$s %2$s(%1$s newValue)
-		//		in { assert(type == Type.%5$s); }
-		//		body {
-		//			auto result = %2$s;
-		//			typeAndSubtype &= ~%3$s;
-		//			typeAndSubtype |= (newValue << %4$s);
-		//			return result;
-		//		}",
-		//		E.stringof, name, ((2 ^^ width) - 1) << offset, offset, type);
-		//}
-
-		//private static string generatePropertiesCode(Type type, string[] code) {
-		//	return code.map!(s => format(s, type)).join;
-		//}
-
-		//private static string bitfieldEnum(E)(string name, uint offset, uint width) {
-		//	return format("
-		//		@property %1$s %2$s()
-		//		in { assert(type == Type.%5$s); }
-		//		body { return cast(%1$s)(typeAndSubtype & %3$s); }
-
-		//		@property %1$s %2$s(%1$s newValue)
-		//		in { assert(type == Type.%5$s); }
-		//		body {
-		//			auto result = %2$s;
-		//			typeAndSubtype &= ~%3$s;
-		//			typeAndSubtype |= (newValue << %4$s);
-		//			return result;
-		//		}",
-		//		E.stringof, name, ((2 ^^ width) - 1) << offset, offset, "%1$s"
-		//	);
-		//}
-
-		//private static string literalValue(string name) {
-		//	return format("
-		//		@property typeof(literal.%1$s) %1$s()
-		//		in { assert(type == Type.%2$s); }
-		//		body { return literal.%1$s; }
-
-		//		@property typeof(literal.%1$s) %1$s(typeof(literal.%1$s) newValue)
-		//		in { assert(type == Type.%2$s); }
-		//		body { return literal.%1$s = newValue; }",
-		//		name, "%1$s"
-		//	);
-		//}
-
-		//mixin(generatePropertiesCode(Type.STRING_LITERAL, [
-		//	bitfieldEnum!StringLiteralType("stringLiteralType", 8, 8),
-		//	bitfieldEnum!StringLiteralType("stringLiteralCharWidth", 16, 8),
-		//	literalValue("stringValue"),
-		//]));
-
-		//mixin(generatePropertiesCode(Type.CHAR_LITERAL, [
-		//	bitfieldEnum!StringLiteralType("characterLiteralCharWidth", 16, 8),
-		//	literalValue("stringValue"),
-		//]));
-
-		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType(Type.STRING_LITERAL, "stringLiteralType", 8, 8));
-		//mixin(generateTypeBitfieldEnumPropertiesCode!CharWidth(Type.STRING_LITERAL, "stringLiteralCharWidth", 8, 8));
-		//mixin(generateLiteralPropertiesCode(Type.STRING_LITERAL, "stringLiteralCharWidth", 8, 8));
-		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType("stringLiteralType", 8, 8));
-		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType("stringLiteralType", 8, 8));
-		//mixin(generateTypeBitfieldEnumPropertiesCode!StringLiteralType("stringLiteralType", 8, 8));
-
-
-		//@property StringLiteralType stringLiteralType() {
-		//	return subType!StringLiteralType;
-		//}
-		//@property StringLiteralType stringLiteralType(StringLiteralType newValue) {
-		//	return subType!StringLiteralType(newValue);
-		//}
-		//@property CharWidth stringLiteralCharWidth() { return charWidth; }
-		//@property dstring stringLiteralValue() { return literal.stringValue;}
-
-		CharWidth charLiteralCharWidth() { return charWidth; }
-
-		IntegerLiteralType integerLiteralType() { return subType!IntegerLiteralType; }
-		bool integerLiteralIsLong() {
-			return (integerLiteralType == IntegerLiteralType.LONG)
-			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
-		}
-		bool integerLiteralIsUnsigned() {
-			return (integerLiteralType == IntegerLiteralType.UNSIGNED)
-			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
-		}
-
-		FloatLiteralType floatLiteralType() {
-			return cast(FloatLiteralType)(typeAndSubtype & SUBTYPE_MASK);
-		}
-
 		union {
 			struct {
 				Type type;
@@ -160,19 +37,14 @@ struct Lexer {
 			}
 		};
 
-
-		private enum TYPE_MASK       = 0x0000F;
-		private enum CODE_MASK       = 0x00FFF;
-		private enum SUBTYPE_MASK    = 0x0F000;
-		private enum CHAR_WIDTH_MASK = 0xF0000;
-
-		private T subType(T)() {
-			return cast(T)(typeAndSubtype & SUBTYPE_MASK);
-		};
-
-		private CharWidth charWidth() {
-			return cast(CharWidth)(typeAndSubtype & CHAR_WIDTH_MASK);
-		};
+		bool integerLiteralIsLong() {
+			return (integerLiteralType == IntegerLiteralType.LONG)
+			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
+		}
+		bool integerLiteralIsUnsigned() {
+			return (integerLiteralType == IntegerLiteralType.UNSIGNED)
+			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
+		}
 
 		enum Type : ubyte {
 			UNKNOWN,
