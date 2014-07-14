@@ -72,13 +72,10 @@ private {
 			Lexer.Token[] getTokens_manualFront() {
 				Lexer.Token[] result;
 				auto lexer = new Lexer(input);
-				uint i = 0;
-				while (!lexer.empty && i < MAX_TOKENS_COUNT) {
-					result ~= lexer.front;
-					lexer.popFront;
-					i++;
-				}
-				return result;
+				do {
+					result ~= lexer.nextToken;
+				} while ((result.length < MAX_TOKENS_COUNT) && (result[$-1].type != Lexer.Token.Type.END_OF_FILE));
+				return result[0..$-1];  // remove END_OF_FILE token  // FIXME
 			}
 
 			auto actualTokens = getTokens_manualFront();

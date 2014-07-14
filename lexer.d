@@ -177,12 +177,7 @@ struct Lexer {
 	private ulong[] lineBeginPositions = [ 0 ];    // physical lines (#line has no effect here)
 	private LineSpecialToken[] lineSpecialTokens = [{0, 0, ""}];  // sorted by lineStartPosition
 
-	Token front() { return currentToken; }
-	Token moveFront() { return currentToken; }
-	bool empty() { return isEmpty; }//position >= code.length-1; }
-	//bool empty() { return currentToken.type == Token.END_OF_FILE; }
-
-	void popFront() {
+	Token nextToken() {
 		skipWhitespaceLineBreaksAndComments();
 		ulong startPosition = position;
 		mixin(
@@ -340,20 +335,46 @@ struct Lexer {
 
 	private Token lexKeywordOrIdentifier(ulong startPosition, ubyte staticTokenId) {
 		if (isIdentifierChar(code[position])) {
-			lexIdentifier;
+			return lexIdentifier(startPosition);
 		} else {
-			lexKeyword(staticTokenId);
+			return lexKeyword(startPosition, staticTokenId);
 		}
 	}
 
+	private Token constructToken(Token.Type type, ulong rangeStart, ulong rangeEnd) {
+		Token result;
+		result.asString = code[rangeStart .. rangeEnd];
+		result.position = rangeStart;
+		result.type = type;
+		return result;
+	}
+
+	private Token constructStaticToken(Token.Type type, ulong startPosition, ubyte staticTokenId) {
+		Token result = constructToken(type, startPosition, position);
+		result.staticTokenId = staticTokenId;
+		return result;
+	}
+
+	private Token constructStringLiteralToken(ulong startPosition, dstring value) {
+		Token result = constructToken(Token.Type.STRING_LITERAL, startPosition, position);
+		result.stringLiteral = value;
+		return result;
+	}
+
+	private Token constructEndOfFileToken(ulong startPosition) {
+		return constructToken(Token.Type.END_OF_FILE, startPosition, position);
+	}
+
+	private Token constructIdentifierToken(ulong startPosition) {
+		return constructToken(Token.Type.IDENTIFIER, startPosition, position);
+	}
+
 	private Token lexKeyword(ulong startPosition, ubyte staticTokenId) {
-		currentToken.type = Token.Type.KEYWORD;
-		currentToken.staticTokenId = staticTokenId;
+		return constructStaticToken(Token.Type.KEYWORD, startPosition, staticTokenId);
 	}
 
 	private Token lexOperator(ulong startPosition, ubyte staticTokenId) {
-		currentToken.type = Token.Type.OPERATOR;
-		currentToken.staticTokenId = staticTokenId;
+		return constructStaticToken(Token.Type.OPERATOR, startPosition, staticTokenId);
 	}
 
 	private dstring lexWysiwygStringLiteralValue(dchar finishChar) {
@@ -368,16 +389,15 @@ struct Lexer {
 	}
 
 	private Token lexGeneralWysiwygStringLiteral(ulong startPosition, Token.StringLiteralType stringLiteralType, dchar finishChar) {
-		currentToken.type = Token.Type.STRING_LITERAL;
-		currentToken.stringLiteral = lexWysiwygStringLiteralValue(finishChar);
+		return constructStringLiteralToken(startPosition, lexWysiwygStringLiteralValue(finishChar));
 	}
 
 	private Token lexWysiwygStringLiteral(ulong startPosition) {
-		lexGeneralWysiwygStringLiteral(Token.StringLiteralType.WYSIWYG, '"');
+		return lexGeneralWysiwygStringLiteral(startPosition, Token.StringLiteralType.WYSIWYG, '"');
 	}
 
 	private Token lexAlternateWysiwygStringLiteral(ulong startPosition) {
-		lexGeneralWysiwygStringLiteral(Token.StringLiteralType.ALTERNATE_WYSIWYG, '`');
+		return lexGeneralWysiwygStringLiteral(startPosition, Token.StringLiteralType.ALTERNATE_WYSIWYG, '`');
 	}
 
 	// returns dstring because escape sequence may contain more than one code point
@@ -420,7 +440,6 @@ struct Lexer {
 	//private dchar
 
 	private Token lexDoubleQuotedStringLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.STRING_LITERAL;
 		assert(0);
 	}
 
@@ -432,13 +451,14 @@ struct Lexer {
 			throw new Exception("hexDigitToInt");
 		}
 
-		currentToken.type = Token.Type.STRING_LITERAL;
+		dstring value;
+		//currentToken.type = Token.Type.STRING_LITERAL;
 		bool hexCharIsRemembered = false;
 		ushort c = 0;
 		while (code[position] != '"') {
 			if (isHexDigit(code[position])) {
 				if (hexCharIsRemembered) {
-					currentToken.stringLiteral ~= ((c << 4) | hexDigitToInt(code[position]));
+					value ~= ((c << 4) | hexDigitToInt(code[position]));
 					c = 0;
 					hexCharIsRemembered = false;
 				} else {
@@ -449,10 +469,11 @@ struct Lexer {
 			position++;
 		}
 		position++;
+		return constructStringLiteralToken(startPosition, value);
 	}
 
 	private Token lexDelimitedStringLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.STRING_LITERAL;
+		//currentToken.type = Token.Type.STRING_LITERAL;
 		dchar closingDelimiter;
 		switch (code[position++]) {
 			case '[': closingDelimiter = ']'; break;
@@ -464,54 +485,50 @@ struct Lexer {
 		while ((code[position] != closingDelimiter) || (code[position+1] != '"')) {
 			position++;
 		}
-		currentToken.stringLiteral = code[currentToken.position+3 .. position];
+		auto value = code[startPosition+3 .. position];
 		position += 2;
+		return constructStringLiteralToken(startPosition, value);
 	}
 
 	private Token lexTokenStringLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.STRING_LITERAL;
 		assert(0);
 	}
 
 	private Token lexSingleQuotedCharacterLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.CHARACTER_LITERAL;
 		assert(0);
 	}
 
 	private Token lexNumberLiteralThatStartsWithZero(ulong startPosition) {
-		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private Token lexBinaryNumberLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private Token lexHexNumberLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private Token lexDecimalNumberLiteral(ulong startPosition) {
-		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private Token lexEofToken(ulong startPosition) {
-		isEmpty = true;
+		return constructEndOfFileToken(startPosition);
 	}
 
 	private Token lexIdentifier(ulong startPosition) {
-		currentToken.type = Token.Type.IDENTIFIER;
 		while (isIdentifierChar(code[position])) {
 			position++;
 		}
+		return constructIdentifierToken(startPosition);
 	}
 
 	private Token lexUnknown(ulong startPosition) {
-		currentToken.type = Token.Type.UNKNOWN;
+		//currentToken.type = Token.Type.UNKNOWN;
 		//position++;
+		return constructToken(Token.Type.UNKNOWN, startPosition, position);
 	}
 
 	private void skipWhitespaceLineBreaksAndComments() {
