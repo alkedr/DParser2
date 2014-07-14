@@ -40,64 +40,33 @@ private {
 				return green(expected) ~ " " ~ red(actual);
 			}
 
-			bool tokensAreEqual(Lexer.Token a, Lexer.Token b) {
-				if ((a.type != b.type) || (a.asString != b.asString) || (a.position != b.position)) return false;
-				if ((a.type == Lexer.Token.UNKNOWN) && (a.unknown != b.unknown)) return false;
-				if ((a.type == Lexer.Token.COMMENT) && (a.comment != b.comment)) return false;
-				if ((a.type == Lexer.Token.STRING_LITERAL) && (a.stringLiteral != b.stringLiteral)) return false;
-				if ((a.type == Lexer.Token.CHARACTER_LITERAL) && (a.characterLiteral != b.characterLiteral)) return false;
-				if ((a.type == Lexer.Token.INTEGER_LITERAL) && (a.integerLiteral != b.integerLiteral)) return false;
-				if ((a.type == Lexer.Token.FLOAT_LITERAL) && (a.floatLiteral != b.floatLiteral)) return false;
-				return true;
-			}
-
-			JSONValue structToJson(T)(T t) {
-				JSONValue[string] result;
-				foreach (fieldName; __traits(allMembers, T)) {
-					result[fieldName] = JSONValue(__traits(getMember, T, fieldName));
+			string replaceUnprintable(dstring s) {
+				string result;
+				foreach (c; s) {
+					result ~= (isPrintable(c) ? to!string(c) : format("#(%x)", c));
 				}
-				return JSONValue(result);
+				return result;
 			}
 
 			string tokenToString(Lexer.Token token) {
-				import std.json;
-				writeln(to!string(token));
-				auto t = parseJSON(to!string(token));
-				return toJSON(&t);
-
-/*
-				string type = to!string(token.type);
-				string typeSpecific = "";
-				if (token.type == Lexer.Token.UNKNOWN) type = "unknown";
-				if (token.type == Lexer.Token.COMMENT) {
-					type = "comment";
-					typeSpecific = ` ` ~ to!string(token.comment.type) ~ ` "` ~ to!string(token.comment.value) ~ `"`;
+				string typeSpecific;
+				final switch (token.type) {
+					case Lexer.Token.Type.STRING_LITERAL: typeSpecific = to!string(token.stringLiteral); break;
+					case Lexer.Token.Type.CHARACTER_LITERAL: typeSpecific = to!string(token.characterLiteral); break;
+					case Lexer.Token.Type.NUMBER_LITERAL: typeSpecific = to!string(token.numberLiteral); break;
+					case Lexer.Token.Type.UNKNOWN: typeSpecific = to!string(token.unknown); break;
+					case Lexer.Token.Type.IDENTIFIER: typeSpecific = to!string(token.identifier); break;
+					case Lexer.Token.Type.KEYWORD: typeSpecific = to!string(token.keyword); break;
+					case Lexer.Token.Type.OPERATOR: typeSpecific = to!string(token.operator); break;
+					case Lexer.Token.Type.END_OF_FILE: typeSpecific = to!string(token.endOfFile); break;
 				}
-				if (token.type == Lexer.Token.END_OF_FILE) type = "endOfFile";
-				if (token.type == Lexer.Token.IDENTIFIER) type = "identifier";
-				if (token.type == Lexer.Token.STRING_LITERAL) {
-					type = "stringLiteral";
-					typeSpecific = ` "` ~ to!string(token.stringLiteral.value) ~ '"';
-				}
-				if (token.type == Lexer.Token.CHARACTER_LITERAL) {
-					type = "characterLiteral";
-					typeSpecific = to!string(" '"d ~ token.characterLiteral.value ~ "'");
-				}
-				if (token.type == Lexer.Token.INTEGER_LITERAL) {
-					type = "integerLiteral";
-					typeSpecific = " " ~ to!string(token.integerLiteral.value);
-				}
-				if (token.type == Lexer.Token.FLOAT_LITERAL) {
-					typeSpecific = " (" ~ to!string(token.floatLiteral.mantissa) ~ ", " ~
-						to!string(token.floatLiteral.exponent) ~ ")";
-				}
-				return format("%s(%d|%d:%d - %d|%d:%d \"%s\"%s)",
-					type,
+				return format("%s(%d|%d:%d - %d|%d:%d <[%s]> %s)",
+					token.type,
 					token.position, 0, 0,
 					token.position + token.asString.length, 0, 0,
-					token.asString,
+					replaceUnprintable(token.asString),
 					typeSpecific
-				);*/
+				);
 			}
 
 			Lexer.Token[] getTokens_manualFront() {
@@ -115,7 +84,7 @@ private {
 			auto actualTokens = getTokens_manualFront();
 			auto result = new Result;
 			foreach (expected, actual; lockstep(expectedTokens, actualTokens)) {
-				if (tokensAreEqual(expected, actual)) {
+				if (tokenToString(expected) == tokenToString(actual)) {
 					result.report ~= succesfulComparison(tokenToString(expected), tokenToString(actual));
 				} else {
 					result.failed = true;
@@ -144,17 +113,17 @@ private {
 			string[] report;
 
 			override string toString() {
-				return failed ? red("FAIL") ~ "\nq{\n" ~ to!string(input) ~ "\n}\n  " ~ report.join("\n  ") ~ "\n\n" : "SUCCESS";
+				return failed ? red("FAIL") ~ "\nq{\n" ~ to!string(input) ~ "\n}\n  " ~ report.join("\n  ") ~ "\n\n" : "";
 			}
 		}
 	}
 
-	TestCase unknown(ubyte type)(dstring code, string message) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.UNKNOWN);
-		expected.unknown.triedToParseAsType = type;
-		expected.unknown.errorMessage = message;
-		return new TestCase(code, [expected]);
-	}
+	//TestCase unknown(ubyte type)(dstring code, string message) {
+	//	auto expected = Lexer.Token(code, 0, Lexer.Token.UNKNOWN);
+	//	expected.unknown.triedToParseAsType = type;
+	//	expected.unknown.errorMessage = message;
+	//	return new TestCase(code, [expected]);
+	//}
 
 	TestCase whitespace(dstring code) {
 		return new TestCase(code, []);
@@ -164,50 +133,53 @@ private {
 		return new TestCase(code, []);
 	}
 
-	TestCase comment(Lexer.Token.Comment.Type type)(dstring code, dstring value) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.COMMENT);
-		expected.comment.type = type;
-		expected.comment.value = value;
-		return new TestCase(code, [expected]);
-	}
+	//TestCase comment(Lexer.Token.Comment.Type type)(dstring code, dstring value) {
+	//	auto expected = Lexer.Token(code, 0, Lexer.Token.COMMENT);
+	//	expected.comment.type = type;
+	//	expected.comment.value = value;
+	//	return new TestCase(code, [expected]);
+	//}
 
-	TestCase blockComment(dstring text) {
-		return comment!(Lexer.Token.Comment.Type.BLOCK)("/*" ~ text ~ "*/", text);
-	}
+	//TestCase blockComment(dstring text) {
+	//	return comment!(Lexer.Token.Comment.Type.BLOCK)("/*" ~ text ~ "*/", text);
+	//}
 
-	TestCase lineComment(dstring text, dstring endOfLine) {
-		return comment!(Lexer.Token.Comment.Type.LINE)("//" ~ text ~ endOfLine, text);
-	}
+	//TestCase lineComment(dstring text, dstring endOfLine) {
+	//	return comment!(Lexer.Token.Comment.Type.LINE)("//" ~ text ~ endOfLine, text);
+	//}
 
-	TestCase nestingBlockComment(dstring text) {
-		return comment!(Lexer.Token.Comment.Type.NESTING_BLOCK)("/+" ~ text ~ "+/", text);
-	}
+	//TestCase nestingBlockComment(dstring text) {
+	//	return comment!(Lexer.Token.Comment.Type.NESTING_BLOCK)("/+" ~ text ~ "+/", text);
+	//}
 
 	TestCase specialTokenSequence(dstring code) {
 		return new TestCase(code, []);
 	}
 
 	TestCase identifier(dstring code) {
-		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.IDENTIFIER)]);
+		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.Type.IDENTIFIER)]);
 	}
 
-	TestCase stringLiteral(Lexer.Token.StringLiteral.Type type)(dstring code, dstring value) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.STRING_LITERAL);
-		expected.stringLiteral.type = type;
-		expected.stringLiteral.value = value;
+	TestCase stringLiteral(
+		Lexer.Token.StringLiteralType type,
+		Lexer.Token.CharWidth charWidth = Lexer.Token.CharWidth.ONE_BYTE
+	)(dstring code, dstring value) {
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.STRING_LITERAL);
+		expected.stringLiteralType = type;
+		expected.stringLiteral = value;
 		return new TestCase(code, [expected]);
 	}
 
 	TestCase wysiwygStringLiteral(dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.WYSIWYG)(`r"` ~ value ~ `"`, value);
+		return stringLiteral!(Lexer.Token.StringLiteralType.WYSIWYG)(`r"` ~ value ~ `"`, value);
 	}
 
 	TestCase alternateWysiwygStringLiteral(dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.ALTERNATE_WYSIWYG)('`' ~ value ~ '`', value);
+		return stringLiteral!(Lexer.Token.StringLiteralType.ALTERNATE_WYSIWYG)('`' ~ value ~ '`', value);
 	}
 
 	TestCase doubleQuotedStringLiteral(dstring code, dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.DOUBLE_QUOTED)('"' ~ value ~ '"', value);
+		return stringLiteral!(Lexer.Token.StringLiteralType.DOUBLE_QUOTED)('"' ~ value ~ '"', value);
 	}
 
 	TestCase doubleQuotedStringLiteral(dstring code) {
@@ -215,53 +187,50 @@ private {
 	}
 
 	TestCase hexStringLiteral(dstring hexText, dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.HEX)(`x"` ~ hexText ~ `"`, value);
+		return stringLiteral!(Lexer.Token.StringLiteralType.HEX)(`x"` ~ hexText ~ `"`, value);
 	}
 
 	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.DELIMITED)(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
+		return stringLiteral!(Lexer.Token.StringLiteralType.DELIMITED)(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
 	}
 
 	TestCase tokenStringLiteral(dstring value) {
-		return stringLiteral!(Lexer.Token.StringLiteral.Type.TOKEN)("q{" ~ value ~ "}", value);
+		return stringLiteral!(Lexer.Token.StringLiteralType.TOKEN)("q{" ~ value ~ "}", value);
 	}
 
-	TestCase characterLiteral(dstring code, dchar value) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.CHARACTER_LITERAL);
-		expected.characterLiteral.value = value;
-		return new TestCase(code, [expected]);
-	}
-
-	TestCase integerLiteral(dstring code, BigInt value, bool hasLongSuffix, bool hasUnsignedSuffix) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.CHARACTER_LITERAL);
-		expected.integerLiteral.value = value;
-		expected.integerLiteral.hasLongSuffix = hasLongSuffix;
-		expected.integerLiteral.hasUnsignedSuffix = hasUnsignedSuffix;
-		return new TestCase(code, [expected]);
-	}
-
-	TestCase floatLiteral(dstring code, BigInt mantissa, long exponent,
-				Lexer.Token.FloatLiteral.TypeSuffix typeSuffix, bool hasImaginarySuffix
+	TestCase characterLiteral(Lexer.Token.CharWidth charWidth = Lexer.Token.CharWidth.ONE_BYTE)(
+					dstring code, dchar value
 	) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.CHARACTER_LITERAL);
-		expected.floatLiteral.mantissa = mantissa;
-		expected.floatLiteral.exponent = exponent;
-		expected.floatLiteral.typeSuffix = typeSuffix;
-		expected.floatLiteral.hasImaginarySuffix = hasImaginarySuffix;
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.CHARACTER_LITERAL);
+		expected.charWidth = charWidth;
+		expected.characterLiteral = value;
+		return new TestCase(code, [expected]);
+	}
+
+	TestCase numberLiteral(Lexer.Token.NumberLiteralType numberLiteralType = INT)(
+				dstring code, BigInt mantissa, long exponent = 0
+	) {
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.NUMBER_LITERAL);
+		expected.numberLiteral.mantissa = mantissa;
+		expected.numberLiteral.exponent = exponent;
 		return new TestCase(code, [expected]);
 	}
 
 	TestCase keyword(dstring code) {
-		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.typeForStaticToken(to!string(code)))]);
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.KEYWORD);
+		expected.staticTokenId = Lexer.Token.staticTokenIdFor(to!string(code));
+		return new TestCase(code, [expected]);
 	}
 
 	TestCase operator(dstring code) {
-		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.typeForStaticToken(to!string(code)))]);
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.OPERATOR);
+		expected.staticTokenId = Lexer.Token.staticTokenIdFor(to!string(code));
+		return new TestCase(code, [expected]);
 	}
 
-	TestCase endOfFile(dstring code) {
-		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.END_OF_FILE)]);
-	}
+	//TestCase endOfFile(dstring code) {
+	//	return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.END_OF_FILE)]);
+	//}
 
 	// TODO: keywords, operators
 
@@ -315,13 +284,13 @@ private {
 }
 
 
-static TestCase[] lineCommentWithAllPossibleLineBreaks(dstring text) {
-	TestCase[] result;
-	foreach (endOfLine; ["\u000D"d, "\u000A", "\u000D\u000A", "\u2028", "\u2029"]) {
-		result ~= lineComment(text, endOfLine);
-	}
-	return result;
-}
+//static TestCase[] lineCommentWithAllPossibleLineBreaks(dstring text) {
+//	TestCase[] result;
+//	foreach (endOfLine; ["\u000D"d, "\u000A", "\u000D\u000A", "\u2028", "\u2029"]) {
+//		result ~= lineComment(text, endOfLine);
+//	}
+//	return result;
+//}
 
 static TestCase[] delimitedStringLiteralWithAllPossibleDelimiters(dstring text) {
 	return [
@@ -391,26 +360,26 @@ unittest {
 		"comment with ŪŅİĆŌĐĒ symbols",
 	];
 
-	auto blockComments = casesOf!blockComment(commonCommentTexts ~ [
-		"*",
-		"**",
-		"/*",
-		"/**",
-		"//*",
-	]);
-	auto lineComments = casesOf!lineCommentWithAllPossibleLineBreaks(commonCommentTexts ~ [
-		"/",
-		"//",
-	]);
-	auto nestingBlockComments = casesOf!nestingBlockComment(commonCommentTexts ~ [
-		"+",
-		"++",
-		"/++/",
-		"/+ comment +/",
-		"qwe /+ rty +/ uio",
-		"//+ comment +/",
-		"qwe //+ rty +/ uio",
-	]);
+	//auto blockComments = casesOf!blockComment(commonCommentTexts ~ [
+	//	"*",
+	//	"**",
+	//	"/*",
+	//	"/**",
+	//	"//*",
+	//]);
+	//auto lineComments = casesOf!lineCommentWithAllPossibleLineBreaks(commonCommentTexts ~ [
+	//	"/",
+	//	"//",
+	//]);
+	//auto nestingBlockComments = casesOf!nestingBlockComment(commonCommentTexts ~ [
+	//	"+",
+	//	"++",
+	//	"/++/",
+	//	"/+ comment +/",
+	//	"qwe /+ rty +/ uio",
+	//	"//+ comment +/",
+	//	"qwe //+ rty +/ uio",
+	//]);
 
 	auto specialTokenSequences = casesOf!specialTokenSequence([
 		`#line 5\n`,
@@ -504,9 +473,9 @@ unittest {
 
 	test("Whitespace                           ", whitespaces);
 	test("End of line                          ", endOfLines);
-	test("Comments / Block                     ", blockComments);
-	test("Comments / Line                      ", lineComments);
-	test("Comments / Nesting block             ", nestingBlockComments);
+	//test("Comments / Block                     ", blockComments);
+	//test("Comments / Line                      ", lineComments);
+	//test("Comments / Nesting block             ", nestingBlockComments);
 //test("Special token sequences              ", specialTokenSequences);
 	test("Identifiers                          ", identifiers);
 	test("Literals / String / Wysiwyg          ", wysiwygStringLiterals);

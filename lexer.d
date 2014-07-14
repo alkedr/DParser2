@@ -10,8 +10,27 @@ import std.stdio;
 
 struct Lexer {
 
+	struct Comment {
+		dstring asString;
+		ulong position;
+		Type type;
+		bool isDdoc;
 
-	struct Token2 {
+		enum Type {
+			UNKNOWN,
+			BLOCK,
+			LINE,
+			NESTING_BLOCK,
+		}
+
+		dstring text() {
+			uint startOffset = isDdoc ? 3 : 2;
+			uint endOffset = type == Type.LINE ? 1 : 2;
+			return asString[startOffset .. $-endOffset];
+		}
+	}
+
+	struct Token {
 		dstring asString;
 		ulong position;
 		union {
@@ -22,28 +41,28 @@ struct Lexer {
 			ushort code;
 		}
 		union {
-			StringLiteralType stringLiteralType;
-			IntegerLiteralType stringLiteralType;
-			FloatLiteralType stringLiteralType;
-			CharWidth charWidth;
+			struct {
+				StringLiteralType stringLiteralType;
+				CharWidth charWidth;
+			}
+			NumberLiteralType numberLiteralType;
 		}
 		union {
-			dstring stringLiteralValue;
-			dchar characterLiteralValue;
-			BigInt integerLiteralValue;
-			struct {
-				BigInt floatLiteralMantissa;
-				long floatLiteralExponent;
-			}
+			Empty unknown;
+			Empty identifier;
+			dstring stringLiteral;
+			dchar characterLiteral;
+			NumberLiteral numberLiteral;
+			Empty keyword;
+			Empty operator;
+			Empty endOfFile;
 		};
+		Comment[] precedingComments;
 
-		bool integerLiteralIsLong() {
-			return (integerLiteralType == IntegerLiteralType.LONG)
-			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
-		}
-		bool integerLiteralIsUnsigned() {
-			return (integerLiteralType == IntegerLiteralType.UNSIGNED)
-			    || (integerLiteralType == IntegerLiteralType.LONG_UNSINGED);
+		struct Empty {}
+		struct NumberLiteral {
+			BigInt mantissa;
+			long exponent;
 		}
 
 		enum Type : ubyte {
@@ -51,10 +70,10 @@ struct Lexer {
 			IDENTIFIER,
 			STRING_LITERAL,
 			CHARACTER_LITERAL,
-			INTEGER_LITERAL,
-			FLOAT_LITERAL,
+			NUMBER_LITERAL,
 			KEYWORD,
 			OPERATOR,
+			END_OF_FILE,   // not a token, terminates token sequence, contains comments after last token
 		}
 
 		enum StringLiteralType {
@@ -74,16 +93,12 @@ struct Lexer {
 			FOUR_BYTES,
 		}
 
-		enum IntegerLiteralType : ubyte {
+		enum NumberLiteralType : ubyte {
 			UNKNOWN,
 			INT,
 			LONG,
 			UNSIGNED,
 			LONG_UNSINGED,
-		}
-
-		enum FloatLiteralType : ubyte {
-			UNKNOWN,
 			FLOAT,
 			REAL,
 			IMAGINARY,
@@ -91,50 +106,16 @@ struct Lexer {
 			REAL_IMAGINARY,
 		}
 
-		struct StringLiteral {
-			enum Type {
-				UNKNOWN,
-				WYSIWYG,
-				ALTERNATE_WYSIWYG,
-				DOUBLE_QUOTED,
-				HEX,
-				DELIMITED,
-				TOKEN,
-			}
-			dstring value;
-			Type type;
+		static ubyte staticTokenIdFor(string staticToken) {
+			assert(staticTokens.countUntil(staticToken) != -1);
+			auto result = staticTokens.countUntil(staticToken);
+			assert(result < 256);
+			return cast(ubyte)result;
 		}
-
-		struct CharacterLiteral {
-			dchar value;
-		}
-
-		struct IntegerLiteral {
-			BigInt value;
-			bool hasLongSuffix;
-			bool hasUnsignedSuffix;
-		}
-
-		struct FloatLiteral {
-			enum TypeSuffix {
-				UNKNOWN,
-				NONE,
-				FLOAT,
-				REAL,
-			}
-			BigInt mantissa;
-			long exponent;
-			TypeSuffix typeSuffix;
-			bool hasImaginarySuffix;
-		}
-
 	}
 
 
-
-
-
-
+/*
 	struct Token {
 		struct Unknown {
 			string errorMessage;
@@ -219,10 +200,11 @@ struct Lexer {
 			assert(result < 256);
 			return cast(ubyte)result;
 		}
-	}
+	}*/
 
 	dstring code;     // TODO: InputRange
 	Token currentToken;
+	void delegate(string errorMessage) errorCallback;
 
 	this(dstring code) {
 		//writeln(code);
@@ -237,6 +219,7 @@ struct Lexer {
 	}
 
 	private ulong position;
+	private bool isEmpty = false;
 
 	// to find line number for position find nearest preceding lineBeginPosition
 	// and add lineNumberDelta of nearest preceding lineSpecialToken
@@ -245,10 +228,12 @@ struct Lexer {
 
 	Token front() { return currentToken; }
 	Token moveFront() { return currentToken; }
-	bool empty() { return currentToken.type == Token.END_OF_FILE; }
+	bool empty() { return isEmpty; }//position >= code.length-1; }
+	//bool empty() { return currentToken.type == Token.END_OF_FILE; }
 
 	void popFront() {
 		skipWhitespaceLineBreaksAndComments();
+		currentToken = Token.init;
 		currentToken.position = position;
 		mixin(
 			new CodeGenerator()
@@ -365,14 +350,14 @@ struct Lexer {
 
 		CodeGenerator withKeywords(alias keywords)() {
 			foreach (keyword; keywords) {
-				on(keyword, "lexKeywordOrIdentifier(Token.STATIC!`" ~ keyword ~ "`);");
+				on(keyword, "lexKeywordOrIdentifier(Token.staticTokenIdFor(`" ~ keyword ~ "`));");
 			}
 			return this;
 		}
 
 		CodeGenerator withOperators(alias operators)() {
 			foreach (operator; operators) {
-				on(operator, "lexStaticToken(Token.STATIC!`" ~ operator ~ "`);");
+				on(operator, "lexOperator(Token.staticTokenIdFor(`" ~ operator ~ "`));");
 			}
 			return this;
 		}
@@ -413,89 +398,94 @@ struct Lexer {
 	}
 
 	private void lexBlockComment() {
-		currentToken.type = Token.COMMENT;
-		currentToken.comment.type = Token.Comment.Type.BLOCK;
-		while ((code[position] != '*') || (code[position+1] != '/')) {
-			position++;
-		}
-		currentToken.comment.value = code[currentToken.position+2 .. position];
-		position += 2;
+		//currentToken.type = Token.COMMENT;
+		//currentToken.comment.type = Token.Comment.Type.BLOCK;
+		assert(0);
+		//while ((code[position] != '*') || (code[position+1] != '/')) {
+		//	position++;
+		//}
+		//currentToken.comment.value = code[currentToken.position+2 .. position];
+		//position += 2;
 	}
 
 	private void lexLineComment() {
-		currentToken.type = Token.COMMENT;
-		currentToken.comment.type = Token.Comment.Type.LINE;
-		while (true) {
-			switch (code[position++]) {
-				case '\u000D':
-					currentToken.comment.value = code[currentToken.position+2 .. position-1];
-					if (code[position] == '\u000A') position++;
-					return;
-				case '\u000A':
-				case '\u2028':
-				case '\u2029':
-					currentToken.comment.value = code[currentToken.position+2 .. position-1];
-					return;
-				default:
-			}
-		};
+		//currentToken.type = Token.COMMENT;
+		//currentToken.comment.type = Token.Comment.Type.LINE;
+		assert(0);
+		//while (true) {
+		//	switch (code[position++]) {
+		//		case '\u000D':
+		//			currentToken.comment.value = code[currentToken.position+2 .. position-1];
+		//			if (code[position] == '\u000A') position++;
+		//			return;
+		//		case '\u000A':
+		//		case '\u2028':
+		//		case '\u2029':
+		//			currentToken.comment.value = code[currentToken.position+2 .. position-1];
+		//			return;
+		//		default:
+		//	}
+		//};
 	}
 
 	private void lexNestingBlockComment() {
-		currentToken.type = Token.COMMENT;
+		//currentToken.type = Token.COMMENT;
 		//currentToken.comment.type = Token.Comment.Type.NESTING_BLOCK;
-		int depth = 1;
-		while (depth > 0) {
-			if ((code[position] == '/') && (code[position+1] == '+')) {
-				depth++;
-				position += 2;
-			} else if ((code[position] == '+') && (code[position+1] == '/')) {
-				depth--;
-				position += 2;
-			} else {
-				position++;
-			}
-		}
-		currentToken.comment.value = code[currentToken.position+2 .. position-2];
+		assert(0);
+		//int depth = 1;
+		//while (depth > 0) {
+		//	if ((code[position] == '/') && (code[position+1] == '+')) {
+		//		depth++;
+		//		position += 2;
+		//	} else if ((code[position] == '+') && (code[position+1] == '/')) {
+		//		depth--;
+		//		position += 2;
+		//	} else {
+		//		position++;
+		//	}
+		//}
+		//currentToken.comment.value = code[currentToken.position+2 .. position-2];
 	}
 
 	private void lexLineSpecialTokenSequence() {
 		assert(0); // TODO: move to skipWhitespaceAndLineBreaks?
 	}
 
-	private void lexKeywordOrIdentifier(ubyte type) {
+	private void lexKeywordOrIdentifier(ubyte staticTokenId) {
 		if (isIdentifierChar(code[position])) {
 			lexIdentifier;
 		} else {
-			lexStaticToken(type);
+			currentToken.type = Token.Type.KEYWORD;
+			currentToken.staticTokenId = staticTokenId;
 		}
 	}
 
-	private void lexStaticToken(ubyte type) {
-		currentToken.type = type;
+	private void lexOperator(ubyte staticTokenId) {
+		currentToken.type = Token.Type.OPERATOR;
+		currentToken.staticTokenId = staticTokenId;
 	}
 
 	private void lexWysiwygStringLiteral() {
-		currentToken.type = Token.STRING_LITERAL;
-		currentToken.stringLiteral.type = Token.StringLiteral.Type.WYSIWYG;
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteralType = Token.StringLiteralType.WYSIWYG;
 		while (code[position] != '"') position++;
-		currentToken.stringLiteral.value = code[currentToken.position+2 .. position];
+		currentToken.stringLiteral = code[currentToken.position+2 .. position];
 		position++;
 		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexAlternateWysiwygStringLiteral() {
-		currentToken.type = Token.STRING_LITERAL;
-		currentToken.stringLiteral.type = Token.StringLiteral.Type.ALTERNATE_WYSIWYG;
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteralType = Token.StringLiteralType.ALTERNATE_WYSIWYG;
 		while (code[position] != '`') position++;
-		currentToken.stringLiteral.value = code[currentToken.position+1 .. position];
+		currentToken.stringLiteral = code[currentToken.position+1 .. position];
 		position++;
 		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexDoubleQuotedStringLiteral() {
-		currentToken.type = Token.STRING_LITERAL;
-		currentToken.stringLiteral.type = Token.StringLiteral.Type.DOUBLE_QUOTED;
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteralType = Token.StringLiteralType.DOUBLE_QUOTED;
 		assert(0);
 		lexOptionalStringLiteralPostfix;
 	}
@@ -508,14 +498,14 @@ struct Lexer {
 			throw new Exception("hexDigitToInt");
 		}
 
-		currentToken.type = Token.STRING_LITERAL;
-		currentToken.stringLiteral.type = Token.StringLiteral.Type.HEX;
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteralType = Token.StringLiteralType.HEX;
 		bool hexCharIsRemembered = false;
 		ushort c = 0;
 		while (code[position] != '"') {
 			if (isHexDigit(code[position])) {
 				if (hexCharIsRemembered) {
-					currentToken.stringLiteral.value ~= ((c << 4) | hexDigitToInt(code[position]));
+					currentToken.stringLiteral ~= ((c << 4) | hexDigitToInt(code[position]));
 					c = 0;
 					hexCharIsRemembered = false;
 				} else {
@@ -530,8 +520,8 @@ struct Lexer {
 	}
 
 	private void lexDelimitedStringLiteral() {
-		currentToken.type = Token.STRING_LITERAL;
-		currentToken.stringLiteral.type = Token.StringLiteral.Type.DELIMITED;
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteralType = Token.StringLiteralType.DELIMITED;
 		dchar closingDelimiter;
 		switch (code[position++]) {
 			case '[': closingDelimiter = ']'; break;
@@ -543,14 +533,14 @@ struct Lexer {
 		while ((code[position] != closingDelimiter) || (code[position+1] != '"')) {
 			position++;
 		}
-		currentToken.comment.value = code[currentToken.position+3 .. position];
+		currentToken.stringLiteral = code[currentToken.position+3 .. position];
 		position += 2;
 		lexOptionalStringLiteralPostfix;
 	}
 
 	private void lexTokenStringLiteral() {
-		currentToken.type = Token.STRING_LITERAL;
-		currentToken.stringLiteral.type = Token.StringLiteral.Type.TOKEN;
+		currentToken.type = Token.Type.STRING_LITERAL;
+		currentToken.stringLiteralType = Token.StringLiteralType.TOKEN;
 		assert(0);
 		lexOptionalStringLiteralPostfix;
 	}
@@ -560,43 +550,43 @@ struct Lexer {
 	}
 
 	private void lexSingleQuotedCharacterLiteral() {
-		currentToken.type = Token.CHARACTER_LITERAL;
+		currentToken.type = Token.Type.CHARACTER_LITERAL;
 		assert(0);
 	}
 
 	private void lexNumberLiteralThatStartsWithZero() {
-		currentToken.type = Token.INTEGER_LITERAL;
+		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private void lexBinaryNumberLiteral() {
-		currentToken.type = Token.INTEGER_LITERAL;
+		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private void lexHexNumberLiteral() {
-		currentToken.type = Token.INTEGER_LITERAL;
+		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private void lexDecimalNumberLiteral() {
-		currentToken.type = Token.INTEGER_LITERAL;
+		currentToken.type = Token.Type.NUMBER_LITERAL;
 		assert(0);
 	}
 
 	private void lexEofToken() {
-		currentToken.type = Token.END_OF_FILE;
+		isEmpty = true;
 	}
 
 	private void lexIdentifier() {
-		currentToken.type = Token.IDENTIFIER;
+		currentToken.type = Token.Type.IDENTIFIER;
 		while (isIdentifierChar(code[position])) {
 			position++;
 		}
 	}
 
 	private void lexUnknown() {
-		currentToken.type = Token.UNKNOWN;
+		currentToken.type = Token.Type.UNKNOWN;
 		//position++;
 	}
 
@@ -670,9 +660,8 @@ struct Lexer {
 
 
 	unittest {
-		writeln(Lexer.Token.__LAST_DYNAMIC_TOKEN);
-		writeln(Lexer.Token.STATIC!(staticTokens[0]));
-		writeln(Lexer.Token.STATIC!(staticTokens[$-1]));
+		writeln(Lexer.Token.staticTokenIdFor(staticTokens[0]));
+		writeln(Lexer.Token.staticTokenIdFor(staticTokens[$-1]));
 	}
 }
 
