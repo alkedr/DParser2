@@ -153,70 +153,70 @@ private {
 		return new TestCase(code, []);
 	}
 
-	TestCase identifier(dstring code) {
-		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.Type.IDENTIFIER)]);
+	TestCase identifier(dstring code, Lexer.Comment[] precedingComments = []) {
+		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.Type.IDENTIFIER, precedingComments)]);
 	}
 
-	TestCase stringLiteral(dstring code, dstring value) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.STRING_LITERAL);
+	TestCase stringLiteral(dstring code, dstring value, Lexer.Comment[] precedingComments = []) {
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.STRING_LITERAL, precedingComments);
 		expected.stringLiteral = value;
 		return new TestCase(code, [expected]);
 	}
 
-	TestCase wysiwygStringLiteral(dstring value) {
+	TestCase wysiwygStringLiteral(dstring value, Lexer.Comment[] precedingComments = []) {
 		return stringLiteral(`r"` ~ value ~ `"`, value);
 	}
 
-	TestCase alternateWysiwygStringLiteral(dstring value) {
+	TestCase alternateWysiwygStringLiteral(dstring value, Lexer.Comment[] precedingComments = []) {
 		return stringLiteral('`' ~ value ~ '`', value);
 	}
 
-	TestCase doubleQuotedStringLiteral(dstring code, dstring value) {
+	TestCase doubleQuotedStringLiteral(dstring code, dstring value, Lexer.Comment[] precedingComments = []) {
 		return stringLiteral('"' ~ code ~ '"', value);
 	}
 
-	TestCase doubleQuotedStringLiteral(dstring code) {
+	TestCase doubleQuotedStringLiteral(dstring code, Lexer.Comment[] precedingComments = []) {
 		return doubleQuotedStringLiteral(code, code);
 	}
 
-	TestCase hexStringLiteral(dstring hexText, dstring value) {
+	TestCase hexStringLiteral(dstring hexText, dstring value, Lexer.Comment[] precedingComments = []) {
 		return stringLiteral(`x"` ~ hexText ~ `"`, value);
 	}
 
-	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter) {
+	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter, Lexer.Comment[] precedingComments = []) {
 		return stringLiteral(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
 	}
 
-	TestCase tokenStringLiteral(dstring value) {
+	TestCase tokenStringLiteral(dstring value, Lexer.Comment[] precedingComments = []) {
 		return stringLiteral("q{" ~ value ~ "}", value);
 	}
 
 	TestCase characterLiteral(Lexer.Token.CharWidth charWidth = Lexer.Token.CharWidth.ONE_BYTE)(
-					dstring code, dchar value
+					dstring code, dchar value, Lexer.Comment[] precedingComments = []
 	) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.CHARACTER_LITERAL);
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.CHARACTER_LITERAL, precedingComments);
 		expected.charWidth = charWidth;
 		expected.characterLiteral = value;
 		return new TestCase(code, [expected]);
 	}
 
 	TestCase numberLiteral(Lexer.Token.NumberLiteralType numberLiteralType = INT)(
-				dstring code, BigInt mantissa, long exponent = 0
+				dstring code, BigInt mantissa, long exponent = 0, Lexer.Comment[] precedingComments = []
 	) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.NUMBER_LITERAL);
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.NUMBER_LITERAL, precedingComments);
 		expected.numberLiteral.mantissa = mantissa;
 		expected.numberLiteral.exponent = exponent;
 		return new TestCase(code, [expected]);
 	}
 
-	TestCase keyword(dstring code) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.KEYWORD);
+	TestCase keyword(dstring code, Lexer.Comment[] precedingComments = []) {
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.KEYWORD, precedingComments);
 		expected.staticTokenId = Lexer.Token.staticTokenIdFor(to!string(code));
 		return new TestCase(code, [expected]);
 	}
 
-	TestCase operator(dstring code) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.OPERATOR);
+	TestCase operator(dstring code, Lexer.Comment[] precedingComments = []) {
+		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.OPERATOR, precedingComments);
 		expected.staticTokenId = Lexer.Token.staticTokenIdFor(to!string(code));
 		return new TestCase(code, [expected]);
 	}
@@ -355,7 +355,7 @@ unittest {
 
 	auto whitespaces = casesOf!whitespace(["\u0020", "\u0009", "\u000B", "\u000C"]);
 
-	auto endOfLines = casesOf!endOfLine(["\u000D", "\u000A", "\u000D\u000A", "\u2028", "\u2029"]);
+	auto lineBreaks = casesOf!endOfLine(["\u000D", "\u000A", "\u000D\u000A", "\u2028", "\u2029"]);
 
 	auto commonCommentTexts = [
 		"",
@@ -478,7 +478,7 @@ unittest {
 
 
 	test("Whitespace                           ", whitespaces);
-	test("End of line                          ", endOfLines);
+	test("End of line                          ", lineBreaks);
 //test("Comments / Block                     ", blockComments);
 //test("Comments / Line                      ", lineComments);
 //test("Comments / Nesting block             ", nestingBlockComments);

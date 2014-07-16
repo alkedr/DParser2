@@ -10,6 +10,18 @@ import std.stdio;
 
 
 // TODO: use currentChar, nextChar, advance и пр.
+// TODO: конвертить все строки в string?
+
+// TODO: лексер не парсит литералы, а только находит их начало и конец и определяет их тип
+// (убрать union { значения литералов })
+// Тогда struct Token будет
+//   dstring asString - 24 (16?) байта
+//   uint position - 4 байта    - макс. размер файла - 4ГБ
+//   union { type } - 4 байта
+// или
+//   uint position - 4 байта
+//   uint length - 4 байта
+//   union { type } - 4 байта
 
 
 
@@ -153,13 +165,45 @@ struct Lexer {
 			assert(result < 256);
 			return cast(ubyte)result;
 		}
+
+		this(dstring asString, ulong position, Type type, Comment[] precedingComments) {
+			this.asString = asString;
+			this.position = position;
+			this.type = type;
+			this.precedingComments = precedingComments;
+		}
+
+		this(Type type) {
+			this.type = type;
+		}
+
+		this(dstring stringLiteralValue) {
+			this.type = Type.STRING_LITERAL;
+			this.stringLiteral = stringLiteralValue;
+		}
+
+		this(dchar charLiteralValue) {
+			this.type = Type.CHARACTER_LITERAL;
+			this.characterLiteral = charLiteralValue;
+		}
+
+		this(NumberLiteral numberLiteralValue) {
+			this.type = Type.NUMBER_LITERAL;
+			this.numberLiteral = numberLiteralValue;
+		}
+
+		this(Type type, ubyte staticTokenId) {
+			assert((type == Token.Type.KEYWORD) || (type == Token.Type.OPERATOR));
+			this.type = type;
+			this.staticTokenId = staticTokenId;
+		}
 	}
 
 	dstring code;     // TODO: InputRange
 	void delegate(string errorMessage) errorCallback;
 
 	this(dstring code) {
-		//writeln(code);
+		writeln(code);
 		this.code = code ~ 0;
 	}
 
@@ -178,226 +222,92 @@ struct Lexer {
 	private LineSpecialToken[] lineSpecialTokens = [{0, 0, ""}];  // sorted by lineStartPosition
 
 	Token nextToken() {
-		skipWhitespaceLineBreaksAndComments();
+		Comment[] comments = skipWhitespaceLineBreaksAndLexComments();
 		ulong startPosition = position;
-		mixin(
-			new CodeGenerator()
-				.withKeywords!keywords
-				.withOperators!operators
-
-				//.on!"/*"("return lexBlockComment;")
-				//.on!"//"("return lexLineComment;")
-				//.on!"/+"("return lexNestingBlockComment;")
-
-				//.on!"#line"("lexLineSpecialTokenSequence;")
-
-				.on!`r"`("return lexWysiwygStringLiteral(startPosition);")
-				.on!"`"("return lexAlternateWysiwygStringLiteral(startPosition);")
-				.on!`"`("return lexDoubleQuotedStringLiteral(startPosition);")
-				.on!`x"`("return lexHexStringLiteral(startPosition);")
-				.on!`q"`("return lexDelimitedStringLiteral(startPosition);")
-				.on!"q{"("return lexTokenStringLiteral(startPosition);")
-
-				.on!"'"("return lexSingleQuotedCharacterLiteral(startPosition);")
-
-				.on!"0"("return lexNumberLiteralThatStartsWithZero(startPosition);")
-				.onNonZeroDigit("return lexDecimalNumberLiteral(startPosition);")
-
-				.onEndOfFile("return lexEofToken(startPosition);")
-
-				.generateCode("return lexIdentifier(startPosition);")
-		);
-		//currentToken.asString = code[currentToken.position .. position];
+		Token result = lexToken();
+		result.asString = code[startPosition .. position];
+		result.position = startPosition;
+		result.precedingComments = comments;
+		return result;
 	}
 
-
-	private class CodeGenerator {
-		private string code = "";
-		private CodeGenerator[string] cases;
-		private bool previousCharWasFirstIdentifierChar = false;
-
-		private CodeGenerator getCodeGeneratorForCase(string caseString) {
-			if (caseString !in cases) cases[caseString] = new CodeGenerator;
-			return cases[caseString];
-		}
-
-		private CodeGenerator getCodeGeneratorForChar(char c) {
-			auto result = getCodeGeneratorForCase(format(`case'\x%02X':`, c));
-			result.previousCharWasFirstIdentifierChar = isIdentifierFirstChar(c);
-			return result;
-		}
-
-
-		CodeGenerator on(string charSequence, string code) {
-			if (charSequence.length == 0) {
-				this.code = code;
-			} else {
-				getCodeGeneratorForChar(charSequence[0]).on(charSequence[1..$], code);
-			}
-			return this;
-		}
-
-		CodeGenerator on(string charSequence)(string code) {
-			return on(charSequence, code);
-		}
-
-		//CodeGenerator onWhitespace(string code) {
-		//	getCodeGeneratorForCase(
-		//		`case'\u0020':` ~
-		//		`case'\u0009':` ~
-		//		`case'\u000B':` ~
-		//		`case'\u000C':`
-		//	).code = code;
-		//	return this;
-		//}
-
-		//CodeGenerator onEndOfLine(string code) {
-		//	getCodeGeneratorForCase(
-		//		`case'\u000D':` ~
-		//			`if (code[position] == '\u000A') position++;` ~
-		//		`case'\u000A':` ~
-		//		`case'\u2028':` ~
-		//		`case'\u2029':`
-		//	).code = code;
-		//	return this;
-		//}
-
-		CodeGenerator onEndOfFile(string code) {
-			getCodeGeneratorForCase(
-				`case'\u0000':` ~
-				`case'\u001A':`
-			).code = code;
-			on!"__EOF__"(code);
-			return this;
-		}
-
-		CodeGenerator onNonZeroDigit(string code) {
-			getCodeGeneratorForCase(`case'1':..case'9':`).code = code;
-			return this;
-		}
-
-
-		CodeGenerator withKeywords(alias keywords)() {
-			foreach (keyword; keywords) {
-				on(keyword, "return lexKeywordOrIdentifier(startPosition, Token.staticTokenIdFor(`" ~ keyword ~ "`));");
-			}
-			return this;
-		}
-
-		CodeGenerator withOperators(alias operators)() {
-			foreach (operator; operators) {
-				on(operator, "return lexOperator(startPosition, Token.staticTokenIdFor(`" ~ operator ~ "`));");
-			}
-			return this;
-		}
-
-		CodeGenerator withEscapeSequences(dchar[string] escapeSequences) {
-			foreach (escapeSequence, c; escapeSequences) {
-				on(escapeSequence, format(`return'\x%08X';`, c));
-			}
-			return this;
-		}
-
-
-		private CodeGenerator getCasesWithIsIdentifierChar(bool boolValue) {
-			auto result = new CodeGenerator;
-			result.code = code;
-			foreach (key, value; cases) {
-				if (value.previousCharWasFirstIdentifierChar == boolValue) result.cases[key] = value;
-			}
-			return result;
-		}
-
-		CodeGenerator getCasesThatStartWithFirstIdentifierChar() {
-			return getCasesWithIsIdentifierChar(true);
-		}
-
-		CodeGenerator getCasesThatDoNotStartWithFirstIdentifierChar() {
-			return getCasesWithIsIdentifierChar(false);
-		}
-
-
-		string generateCode(string onNoMatch) const {
-			auto result = "";
-			if (cases.length == 0) {
-				result = code.length > 0 ? code : onNoMatch;
-			} else {
-				result = "switch(code[position++]){";
-				foreach (key, value; cases) {
-					result ~= key ~ value.generateCode(onNoMatch) ~ "break;";
-				}
-				result ~= "default:position--;" ~ (code.length > 0 ? code : onNoMatch);
-				result ~= "}";
-			}
-			return result;
-		}
-	}
-
-	private Token lexKeywordOrIdentifier(ulong startPosition, ubyte staticTokenId) {
-		if (isIdentifierChar(code[position])) {
-			return lexIdentifier(startPosition);
+	// position must be on first char of token
+	// returns Token without asString, position and comments
+	// only type and type-specific fields are set
+	// updates position
+	private Token lexToken() {
+		if (isIdentifierFirstChar(code[position])) {
+			mixin(
+				new CodeGenerator()
+					.withStaticTokens!keywords(q{return lexKeywordOrIdentifier(Token.staticTokenIdFor(`%s`));})
+					.on!`r"`(q{return lexStringLiteral!(lexWysiwygStringLiteralValue  );})
+					.on!`x"`(q{return lexStringLiteral!(lexHexStringLiteralValue      );})
+					.on!`q"`(q{return lexStringLiteral!(lexDelimitedStringLiteralValue);})
+					.on!"q{"(q{return lexStringLiteral!(lexTokenStringLiteralValue    );})
+					.on!"__EOF__"(q{return lexEofToken;})
+					.generateCode(q{return lexIdentifier;})
+			);
 		} else {
-			return lexKeyword(startPosition, staticTokenId);
+			mixin(
+				new CodeGenerator()
+					.withStaticTokens!operators(q{return lexOperator(Token.staticTokenIdFor(`%s`));})
+					.on!"`" (q{return lexStringLiteral!(lexAlternateWysiwygStringLiteralValue);})
+					.on!`"` (q{return lexStringLiteral!(lexDoubleQuotedStringLiteralValue    );})
+					.on!"'" (q{return lexSingleQuotedCharacterLiteral;})
+					.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
+					.on!('1', '2', '3', '4', '5', '6', '7', '8', '9')(q{return position--; lexDecimalNumberLiteral;})
+					.on!"."(
+						new CodeGenerator()
+							.on!('1', '2', '3', '4', '5', '6', '7', '8', '9')(q{position--; return lexDecimalFloatThatStartsWithDot;})
+							.generateCode(q{return lexOperator(Token.staticTokenIdFor(`.`));})
+					)
+					.on!('\u0000', '\u001A')(q{return lexEofToken;})
+					.generateCode(q{return lexIdentifier;})  // FIXME: not lexIdentifier
+			);
 		}
 	}
 
-	private Token constructToken(Token.Type type, ulong rangeStart, ulong rangeEnd) {
-		Token result;
-		result.asString = code[rangeStart .. rangeEnd];
-		result.position = rangeStart;
-		result.type = type;
-		return result;
+
+	private Token lexKeywordOrIdentifier(ubyte staticTokenId) {
+		if (isIdentifierChar(code[position])) {
+			return lexIdentifier;
+		} else {
+			return lexKeyword(staticTokenId);
+		}
 	}
 
-	private Token constructStaticToken(Token.Type type, ulong startPosition, ubyte staticTokenId) {
-		Token result = constructToken(type, startPosition, position);
-		result.staticTokenId = staticTokenId;
-		return result;
+	private Token lexKeyword(ubyte staticTokenId) {
+		return Token(Token.Type.KEYWORD, staticTokenId);
 	}
 
-	private Token constructStringLiteralToken(ulong startPosition, dstring value) {
-		Token result = constructToken(Token.Type.STRING_LITERAL, startPosition, position);
-		result.stringLiteral = value;
-		return result;
+	private Token lexOperator(ubyte staticTokenId) {
+		return Token(Token.Type.OPERATOR, staticTokenId);
 	}
 
-	private Token constructEndOfFileToken(ulong startPosition) {
-		return constructToken(Token.Type.END_OF_FILE, startPosition, position);
+	private Token lexStringLiteral(alias lexValueMethod)() {
+		dstring value = lexValueMethod();
+		if ((code[position] == 'c') || (code[position] == 'w') || (code[position] == 'd')) position++;
+		return Token(value);
 	}
 
-	private Token constructIdentifierToken(ulong startPosition) {
-		return constructToken(Token.Type.IDENTIFIER, startPosition, position);
-	}
+	// TODO: write general function that copies chars until (string finishSequence)
 
-	private Token lexKeyword(ulong startPosition, ubyte staticTokenId) {
-		return constructStaticToken(Token.Type.KEYWORD, startPosition, staticTokenId);
-	}
-
-	private Token lexOperator(ulong startPosition, ubyte staticTokenId) {
-		return constructStaticToken(Token.Type.OPERATOR, startPosition, staticTokenId);
-	}
-
-	private dstring lexWysiwygStringLiteralValue(dchar finishChar) {
+	private dstring lexGeneralWysiwygStringLiteralValue(dchar finishChar) {
 		dstring result;
 		while (code[position] != finishChar) {
 			result ~= code[position];
 			position++;
 		}
 		position++;
-		if ((code[position] == 'c') || (code[position] == 'w') || (code[position] == 'd')) position++;
 		return result;
 	}
 
-	private Token lexGeneralWysiwygStringLiteral(ulong startPosition, Token.StringLiteralType stringLiteralType, dchar finishChar) {
-		return constructStringLiteralToken(startPosition, lexWysiwygStringLiteralValue(finishChar));
+	private dstring lexWysiwygStringLiteralValue() {
+		return lexGeneralWysiwygStringLiteralValue('"');
 	}
 
-	private Token lexWysiwygStringLiteral(ulong startPosition) {
-		return lexGeneralWysiwygStringLiteral(startPosition, Token.StringLiteralType.WYSIWYG, '"');
-	}
-
-	private Token lexAlternateWysiwygStringLiteral(ulong startPosition) {
-		return lexGeneralWysiwygStringLiteral(startPosition, Token.StringLiteralType.ALTERNATE_WYSIWYG, '`');
+	private dstring lexAlternateWysiwygStringLiteralValue() {
+		return lexGeneralWysiwygStringLiteralValue('`');
 	}
 
 	// returns dstring because escape sequence may contain more than one code point
@@ -406,7 +316,7 @@ struct Lexer {
 		if (code[position++] == '\\') {
 
 			// need code generator with backtracking (if no match return to first symbol and return it)
-			//mixin(new CodeGenerator().withEscapeSequences().generateCode("return code[position-1];"));
+			//mixin(new CodeGenerator().withEscapeSequences().generateCode("throw new Exception(`unknown escape sequence`)");
 		}
 		return [code[position-1]];
 
@@ -437,13 +347,11 @@ struct Lexer {
 		//)
 	}
 
-	//private dchar
-
-	private Token lexDoubleQuotedStringLiteral(ulong startPosition) {
+	private dstring lexDoubleQuotedStringLiteralValue() {
 		assert(0);
 	}
 
-	private Token lexHexStringLiteral(ulong startPosition) {
+	private dstring lexHexStringLiteralValue() {
 		ubyte hexDigitToInt(dchar c) {
 			if (isDigit(code[position])) return cast(ubyte)(c - '0');
 			if (isLower(code[position])) return cast(ubyte)(c - 'a' + 10);
@@ -452,7 +360,6 @@ struct Lexer {
 		}
 
 		dstring value;
-		//currentToken.type = Token.Type.STRING_LITERAL;
 		bool hexCharIsRemembered = false;
 		ushort c = 0;
 		while (code[position] != '"') {
@@ -468,12 +375,14 @@ struct Lexer {
 			}
 			position++;
 		}
+		if (hexCharIsRemembered) {
+			throw new Exception("uneven hex digits count in hex string literal");
+		}
 		position++;
-		return constructStringLiteralToken(startPosition, value);
+		return value;
 	}
 
-	private Token lexDelimitedStringLiteral(ulong startPosition) {
-		//currentToken.type = Token.Type.STRING_LITERAL;
+	private dstring lexDelimitedStringLiteralValue() {
 		dchar closingDelimiter;
 		switch (code[position++]) {
 			case '[': closingDelimiter = ']'; break;
@@ -482,56 +391,66 @@ struct Lexer {
 			case '{': closingDelimiter = '}'; break;
 			default : throw new Exception("unknown delimiter " ~ to!string(code[position-1]));
 		}
+		dstring result;
 		while ((code[position] != closingDelimiter) || (code[position+1] != '"')) {
+			result ~= code[position];
 			position++;
 		}
-		auto value = code[startPosition+3 .. position];
 		position += 2;
-		return constructStringLiteralToken(startPosition, value);
+		return result;
 	}
 
-	private Token lexTokenStringLiteral(ulong startPosition) {
+	private dstring lexTokenStringLiteralValue() {
 		assert(0);
 	}
 
-	private Token lexSingleQuotedCharacterLiteral(ulong startPosition) {
+	private Token lexSingleQuotedCharacterLiteral() {
 		assert(0);
 	}
 
-	private Token lexNumberLiteralThatStartsWithZero(ulong startPosition) {
+	private Token lexNumberLiteralThatStartsWithZero() {
+		switch (code[position]) {
+			case 'x': return lexHexNumberLiteral;
+			case 'b': return lexBinaryIntegerLiteral;
+			case '0': .. case '9': throw new Exception("decimal number literals can't have leading zeros");
+			//case '.' return lex
+			default:
+		}
 		assert(0);
 	}
 
-	private Token lexBinaryNumberLiteral(ulong startPosition) {
+	private Token lexBinaryIntegerLiteral() {
 		assert(0);
 	}
 
-	private Token lexHexNumberLiteral(ulong startPosition) {
+	private Token lexHexNumberLiteral() {
 		assert(0);
 	}
 
-	private Token lexDecimalNumberLiteral(ulong startPosition) {
+	private Token lexDecimalNumberLiteral() {
 		assert(0);
 	}
 
-	private Token lexEofToken(ulong startPosition) {
-		return constructEndOfFileToken(startPosition);
+	private Token lexDecimalFloatThatStartsWithDot() {
+		assert(0);
 	}
 
-	private Token lexIdentifier(ulong startPosition) {
+	private Token lexEofToken() {
+		return Token(Token.Type.END_OF_FILE);
+	}
+
+	private Token lexIdentifier() {
 		while (isIdentifierChar(code[position])) {
 			position++;
 		}
-		return constructIdentifierToken(startPosition);
+		return Token(Token.Type.IDENTIFIER);
 	}
 
-	private Token lexUnknown(ulong startPosition) {
-		//currentToken.type = Token.Type.UNKNOWN;
-		//position++;
-		return constructToken(Token.Type.UNKNOWN, startPosition, position);
+	private Token lexUnknown() {
+		return Token(Token.Type.UNKNOWN);
 	}
 
-	private void skipWhitespaceLineBreaksAndComments() {
+	private Comment[] skipWhitespaceLineBreaksAndLexComments() {
 		while (true) {
 			switch (code[position]) {
 				case '\u000D':
@@ -550,7 +469,7 @@ struct Lexer {
 				//		case '+': skipNestingBlockComment();
 				//		default: return;
 				//	}
-				default: return;
+				default: return [];
 			}
 			position++;
 		}
@@ -621,6 +540,111 @@ struct Lexer {
 
 	private static bool isNotIdentifierFirstChar(dchar c) {
 		return !isIdentifierFirstChar(c);
+	}
+
+
+
+	private class CodeGenerator {
+		private string code = "";
+		private CodeGenerator[string] cases;
+
+		//private CodeGenerator on(string charSequence, string code) {
+		//	if (charSequence.length == 0) {
+		//		this.code = code;
+		//	} else {
+		//		if (charSequence[0] !in cases) cases[charSequence[0]] = new CodeGenerator;
+		//		cases[charSequence[0]].on(charSequence[1..$], code);
+		//	}
+		//}
+
+
+
+		//CodeGenerator onCase(string caseString, CodeGenerator cg) {
+		//	cases[caseString] = cg;
+		//}
+
+		//CodeGenerator onChars(char[] chars, CodeGenerator cg) {
+		//	cases[chars.map!(c => format(`case'\x%02X':`, c)).join] = cg;
+		//}
+
+		//CodeGenerator onCharSequence(string charSequence, CodeGenerator cg) {
+		//	assert(charSequence.length != 0);
+		//	if (charSequence.length == 1) {
+		//		cases[charSequence] = cg;
+		//	}
+		//	cases[caseString] = cg;
+		//}
+
+
+
+
+		//private CodeGenerator lastChild = null;
+
+		//public CodeGenerator onCase(string caseString) {
+		//	lastChild = new CodeGenerator;
+		//	cases[caseString] = lastChild;
+		//	return this;
+		//}
+
+		//public CodeGenerator followedBy(string caseString) {
+		//	lastChild.on(caseString);
+		//	lastChild = lastChild.lastChild;
+		//}
+
+		//public CodeGenerator code(string newCode) {
+		//	this.code = newCode;
+		//	return this;
+		//}
+
+
+
+
+
+
+		private CodeGenerator getCodeGeneratorForCase(string caseString) {
+			if (caseString !in cases) cases[caseString] = new CodeGenerator;
+			return cases[caseString];
+		}
+
+		CodeGenerator on(string charSequence, string code) {
+			if (charSequence.length == 0) {
+				this.code = code;
+			} else {
+				getCodeGeneratorForCase(format(`case'\x%02X':`, charSequence[0])).on(charSequence[1..$], code);
+			}
+			return this;
+		}
+
+		CodeGenerator on(charSequences...)(string code) {
+			static if (charSequences.length == 1) {
+				return on(charSequences[0], code);
+			} else {
+				getCodeGeneratorForCase([charSequences].map!(c => format(`case'\x%02X':`, c)).join).code = code;
+				return this;
+			}
+		}
+
+		CodeGenerator withStaticTokens(alias staticTokens)(string codeFormatString) {
+			foreach (staticToken; staticTokens) {
+				on(staticToken, format(codeFormatString, staticToken));
+			}
+			return this;
+		}
+
+		string generateCode(string onNoMatch) const {
+			auto result = "";
+			if (cases.length == 0) {
+				result = code.length > 0 ? code : onNoMatch;
+			} else {
+				result = "switch(code[position++]){";
+				foreach (key, value; cases) {
+					result ~= key ~ value.generateCode(onNoMatch) ~ "break;";
+				}
+				result ~= "default:position--;" ~ (code.length > 0 ? code : onNoMatch);
+				result ~= "}";
+			}
+			return result;
+		}
 	}
 
 
