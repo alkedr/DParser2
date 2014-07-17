@@ -12,16 +12,10 @@ import std.stdio;
 // TODO: use currentChar, nextChar, advance и пр.
 // TODO: конвертить все строки в string?
 
+// ОПТИМИЗАЦИЯ ДЛЯ ПОДСВЕТКИ СИНТАКСИСА И АВТОДОПОЛНЕНИЯ
+// Для подсветки и автодополнения не нужно парсить значения литералов, только типы
 // TODO: лексер не парсит литералы, а только находит их начало и конец и определяет их тип
 // (убрать union { значения литералов })
-// Тогда struct Token будет
-//   dstring asString - 24 (16?) байта
-//   uint position - 4 байта    - макс. размер файла - 4ГБ
-//   union { type } - 4 байта
-// или
-//   uint position - 4 байта
-//   uint length - 4 байта
-//   union { type } - 4 байта
 
 
 
@@ -63,7 +57,15 @@ struct Lexer {
 		}
 	}
 
+	struct Token2 {
+		Lexer * lexer;
+		size_t firstPrecedingCommentPosition;
+		size_t position;
+		size_t length;    // for keywords and operators holds (-staticTokenId), for other tokens length
+	}
+
 	struct Token {
+		Comment[] precedingComments;
 		dstring asString;
 		ulong position;
 		union {
@@ -73,17 +75,7 @@ struct Lexer {
 			}
 			ushort code;
 		}
-		union {
-			Empty unknown;
-			Empty identifier;
-			dstring stringLiteral;
-			dchar characterLiteral;
-			NumberLiteral numberLiteral;
-			Empty keyword;
-			Empty operator;
-			Empty endOfFile;
-		};
-		Comment[] precedingComments;
+		NumberLiteralType numberLiteralType;
 
 		bool empty() const {
 			return asString.length == 0;
@@ -109,13 +101,6 @@ struct Lexer {
 			if (asString[$-1] == 'w') return CharWidth.TWO_BYTES;
 			if (asString[$-1] == 'd') return CharWidth.FOUR_BYTES;
 			return CharWidth.ONE_BYTE;
-		}
-
-		struct Empty {}
-		struct NumberLiteral {
-			BigInt mantissa;
-			long exponent;
-			NumberLiteralType numberLiteralType;
 		}
 
 		enum Type : ubyte {
@@ -177,19 +162,9 @@ struct Lexer {
 			this.type = type;
 		}
 
-		this(dstring stringLiteralValue) {
-			this.type = Type.STRING_LITERAL;
-			this.stringLiteral = stringLiteralValue;
-		}
-
-		this(dchar charLiteralValue) {
-			this.type = Type.CHARACTER_LITERAL;
-			this.characterLiteral = charLiteralValue;
-		}
-
-		this(NumberLiteral numberLiteralValue) {
-			this.type = Type.NUMBER_LITERAL;
-			this.numberLiteral = numberLiteralValue;
+		this(NumberLiteralType numberLiteralType) {
+			this.type = Token.Type.NUMBER_LITERAL;
+			this.numberLiteralType = numberLiteralType;
 		}
 
 		this(Type type, ubyte staticTokenId) {
@@ -203,7 +178,7 @@ struct Lexer {
 	void delegate(string errorMessage) errorCallback;
 
 	this(dstring code) {
-		writeln(code);
+		//writeln(code);
 		this.code = code ~ 0;
 	}
 
@@ -233,38 +208,56 @@ struct Lexer {
 
 	// position must be on first char of token
 	// returns Token without asString, position and comments
-	// only type and type-specific fields are set
+	// only type and subtype are set
 	// updates position
 	private Token lexToken() {
 		if (isIdentifierFirstChar(code[position])) {
 			mixin(
 				new CodeGenerator()
-					.withStaticTokens!keywords(q{return lexKeywordOrIdentifier(Token.staticTokenIdFor(`%s`));})
-					.on!`r"`(q{return lexStringLiteral!(lexWysiwygStringLiteralValue  );})
-					.on!`x"`(q{return lexStringLiteral!(lexHexStringLiteralValue      );})
-					.on!`q"`(q{return lexStringLiteral!(lexDelimitedStringLiteralValue);})
-					.on!"q{"(q{return lexStringLiteral!(lexTokenStringLiteralValue    );})
-					.on!"__EOF__"(q{return lexEofToken;})
+					.onStaticTokens!keywords(q{return lexKeywordOrIdentifier(Token.staticTokenIdFor(`%s`));})
+					.on!`r"`(q{return lexChars(`"`, Token.Type.STRING_LITERAL);})
+					.on!`x"`(q{return lexChars(`"`, Token.Type.STRING_LITERAL);})
+					.on!`q"`(q{return lexChars(`"`, Token.Type.STRING_LITERAL);})
+					.on!"q{"(q{return lexTokenStringLiteral;})
+					.on!"__EOF__"(q{return lexEndOfFile;})
 					.generateCode(q{return lexIdentifier;})
 			);
 		} else {
 			mixin(
 				new CodeGenerator()
-					.withStaticTokens!operators(q{return lexOperator(Token.staticTokenIdFor(`%s`));})
-					.on!"`" (q{return lexStringLiteral!(lexAlternateWysiwygStringLiteralValue);})
-					.on!`"` (q{return lexStringLiteral!(lexDoubleQuotedStringLiteralValue    );})
-					.on!"'" (q{return lexSingleQuotedCharacterLiteral;})
+					.onStaticTokens!operators(q{return lexOperator(Token.staticTokenIdFor(`%s`));})
+					.on!"`" (q{return lexChars("`", Token.Type.STRING_LITERAL);})
+					.on!`"` (q{return lexChars(`"`, Token.Type.STRING_LITERAL);})
+					.on!"'" (q{return lexChars("'", Token.Type.CHARACTER_LITERAL);})
 					.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
-					.on!('1', '2', '3', '4', '5', '6', '7', '8', '9')(q{return position--; lexDecimalNumberLiteral;})
+					.on!('1', '2', '3', '4', '5', '6', '7', '8', '9')(q{return lexDecimalNumberLiteral;})
 					.on!"."(
 						new CodeGenerator()
-							.on!('1', '2', '3', '4', '5', '6', '7', '8', '9')(q{position--; return lexDecimalFloatThatStartsWithDot;})
+							.on!('1', '2', '3', '4', '5', '6', '7', '8', '9')(q{return lexDecimalFloatThatStartsWithDot;})
 							.generateCode(q{return lexOperator(Token.staticTokenIdFor(`.`));})
 					)
-					.on!('\u0000', '\u001A')(q{return lexEofToken;})
+					.on!('\u0000', '\u001A')(q{return lexEndOfFile;})
 					.generateCode(q{return lexIdentifier;})  // FIXME: not lexIdentifier
 			);
 		}
+	}
+
+	private Token lexCharsWhileCurrentChar(alias predicate)(Token.Type resultType) {
+		while ((position < code.length) && predicate(code[position])) {
+			position++;
+		}
+		return Token(resultType);
+	}
+
+	private Token lexChars(dstring finishSequence, Token.Type resultType) {
+		while (position + finishSequence.length <= code.length) {
+			if (code[position .. position+finishSequence.length] == finishSequence) {
+				position += finishSequence.length;
+				return Token(resultType);
+			}
+			position++;
+		}
+		throw new Exception("Unexpected end of file");
 	}
 
 
@@ -284,41 +277,41 @@ struct Lexer {
 		return Token(Token.Type.OPERATOR, staticTokenId);
 	}
 
-	private Token lexStringLiteral(alias lexValueMethod)() {
-		dstring value = lexValueMethod();
-		if ((code[position] == 'c') || (code[position] == 'w') || (code[position] == 'd')) position++;
-		return Token(value);
-	}
+	//private Token lexStringLiteral(alias lexValueMethod)() {
+	//	dstring value = lexValueMethod();
+	//	if ((code[position] == 'c') || (code[position] == 'w') || (code[position] == 'd')) position++;
+	//	return Token(Token.Type.STRING_LITERAL);
+	//}
 
 	// TODO: write general function that copies chars until (string finishSequence)
 
-	private dstring lexGeneralWysiwygStringLiteralValue(dchar finishChar) {
-		dstring result;
-		while (code[position] != finishChar) {
-			result ~= code[position];
-			position++;
-		}
-		position++;
-		return result;
-	}
+	//private dstring lexGeneralWysiwygStringLiteralValue(dchar finishChar) {
+	//	dstring result;
+	//	while (code[position] != finishChar) {
+	//		result ~= code[position];
+	//		position++;
+	//	}
+	//	position++;
+	//	return result;
+	//}
 
-	private dstring lexWysiwygStringLiteralValue() {
-		return lexGeneralWysiwygStringLiteralValue('"');
-	}
+	//private dstring lexWysiwygStringLiteralValue() {
+	//	return lexGeneralWysiwygStringLiteralValue('"');
+	//}
 
-	private dstring lexAlternateWysiwygStringLiteralValue() {
-		return lexGeneralWysiwygStringLiteralValue('`');
-	}
+	//private dstring lexAlternateWysiwygStringLiteralValue() {
+	//	return lexGeneralWysiwygStringLiteralValue('`');
+	//}
 
 	// returns dstring because escape sequence may contain more than one code point
 	// See HTML5 spec: http://www.w3.org/TR/html5/syntax.html#named-character-references
-	private dstring lexCharacterOrEscapeSequence() {
-		if (code[position++] == '\\') {
+	//private dstring lexCharacterOrEscapeSequence() {
+	//	if (code[position++] == '\\') {
 
 			// need code generator with backtracking (if no match return to first symbol and return it)
 			//mixin(new CodeGenerator().withEscapeSequences().generateCode("throw new Exception(`unknown escape sequence`)");
-		}
-		return [code[position-1]];
+		//}
+		//return [code[position-1]];
 
 
 		//mixin(new CodeGenerator()
@@ -345,68 +338,72 @@ struct Lexer {
 		//	\U HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit HexDigit
 		//	.generateCode("return code[position-1];")   // неправильно, во вложенных свичах попадание в default - ошибка
 		//)
-	}
+	//}
 
-	private dstring lexDoubleQuotedStringLiteralValue() {
+	private Token lexTokenStringLiteral() {
 		assert(0);
 	}
 
-	private dstring lexHexStringLiteralValue() {
-		ubyte hexDigitToInt(dchar c) {
-			if (isDigit(code[position])) return cast(ubyte)(c - '0');
-			if (isLower(code[position])) return cast(ubyte)(c - 'a' + 10);
-			if (isUpper(code[position])) return cast(ubyte)(c - 'A' + 10);
-			throw new Exception("hexDigitToInt");
-		}
+	//private dstring lexDoubleQuotedStringLiteralValue() {
+	//	assert(0);
+	//}
 
-		dstring value;
-		bool hexCharIsRemembered = false;
-		ushort c = 0;
-		while (code[position] != '"') {
-			if (isHexDigit(code[position])) {
-				if (hexCharIsRemembered) {
-					value ~= ((c << 4) | hexDigitToInt(code[position]));
-					c = 0;
-					hexCharIsRemembered = false;
-				} else {
-					c = cast(ushort)(hexDigitToInt(code[position]));
-					hexCharIsRemembered = true;
-				}
-			}
-			position++;
-		}
-		if (hexCharIsRemembered) {
-			throw new Exception("uneven hex digits count in hex string literal");
-		}
-		position++;
-		return value;
-	}
+	//private dstring lexHexStringLiteralValue() {
+	//	ubyte hexDigitToInt(dchar c) {
+	//		if (isDigit(code[position])) return cast(ubyte)(c - '0');
+	//		if (isLower(code[position])) return cast(ubyte)(c - 'a' + 10);
+	//		if (isUpper(code[position])) return cast(ubyte)(c - 'A' + 10);
+	//		throw new Exception("hexDigitToInt");
+	//	}
 
-	private dstring lexDelimitedStringLiteralValue() {
-		dchar closingDelimiter;
-		switch (code[position++]) {
-			case '[': closingDelimiter = ']'; break;
-			case '(': closingDelimiter = ')'; break;
-			case '<': closingDelimiter = '>'; break;
-			case '{': closingDelimiter = '}'; break;
-			default : throw new Exception("unknown delimiter " ~ to!string(code[position-1]));
-		}
-		dstring result;
-		while ((code[position] != closingDelimiter) || (code[position+1] != '"')) {
-			result ~= code[position];
-			position++;
-		}
-		position += 2;
-		return result;
-	}
+	//	dstring value;
+	//	bool hexCharIsRemembered = false;
+	//	ushort c = 0;
+	//	while (code[position] != '"') {
+	//		if (isHexDigit(code[position])) {
+	//			if (hexCharIsRemembered) {
+	//				value ~= ((c << 4) | hexDigitToInt(code[position]));
+	//				c = 0;
+	//				hexCharIsRemembered = false;
+	//			} else {
+	//				c = cast(ushort)(hexDigitToInt(code[position]));
+	//				hexCharIsRemembered = true;
+	//			}
+	//		}
+	//		position++;
+	//	}
+	//	if (hexCharIsRemembered) {
+	//		throw new Exception("uneven hex digits count in hex string literal");
+	//	}
+	//	position++;
+	//	return value;
+	//}
 
-	private dstring lexTokenStringLiteralValue() {
-		assert(0);
-	}
+	//private dstring lexDelimitedStringLiteralValue() {
+	//	dchar closingDelimiter;
+	//	switch (code[position++]) {
+	//		case '[': closingDelimiter = ']'; break;
+	//		case '(': closingDelimiter = ')'; break;
+	//		case '<': closingDelimiter = '>'; break;
+	//		case '{': closingDelimiter = '}'; break;
+	//		default : throw new Exception("unknown delimiter " ~ to!string(code[position-1]));
+	//	}
+	//	dstring result;
+	//	while ((code[position] != closingDelimiter) || (code[position+1] != '"')) {
+	//		result ~= code[position];
+	//		position++;
+	//	}
+	//	position += 2;
+	//	return result;
+	//}
 
-	private Token lexSingleQuotedCharacterLiteral() {
-		assert(0);
-	}
+	//private dstring lexTokenStringLiteralValue() {
+	//	assert(0);
+	//}
+
+	//private Token lexSingleQuotedCharacterLiteral() {
+	//	assert(0);
+	//}
 
 	private Token lexNumberLiteralThatStartsWithZero() {
 		switch (code[position]) {
@@ -435,15 +432,16 @@ struct Lexer {
 		assert(0);
 	}
 
-	private Token lexEofToken() {
+	private Token lexEndOfFile() {
 		return Token(Token.Type.END_OF_FILE);
 	}
 
 	private Token lexIdentifier() {
-		while (isIdentifierChar(code[position])) {
-			position++;
-		}
-		return Token(Token.Type.IDENTIFIER);
+		return lexCharsWhileCurrentChar!(isIdentifierChar)(Token.Type.IDENTIFIER);
+		//while (isIdentifierChar(code[position])) {
+		//	position++;
+		//}
+		//return Token(Token.Type.IDENTIFIER);
 	}
 
 	private Token lexUnknown() {
@@ -624,7 +622,7 @@ struct Lexer {
 			}
 		}
 
-		CodeGenerator withStaticTokens(alias staticTokens)(string codeFormatString) {
+		CodeGenerator onStaticTokens(alias staticTokens)(string codeFormatString) {
 			foreach (staticToken; staticTokens) {
 				on(staticToken, format(codeFormatString, staticToken));
 			}

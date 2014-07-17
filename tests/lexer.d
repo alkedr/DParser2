@@ -50,16 +50,16 @@ private {
 
 			string tokenToString(Lexer.Token token) {
 				string typeSpecific;
-				final switch (token.type) {
-					case Lexer.Token.Type.STRING_LITERAL: typeSpecific = to!string(token.stringLiteral); break;
-					case Lexer.Token.Type.CHARACTER_LITERAL: typeSpecific = to!string(token.characterLiteral); break;
-					case Lexer.Token.Type.NUMBER_LITERAL: typeSpecific = to!string(token.numberLiteral); break;
-					case Lexer.Token.Type.UNKNOWN: typeSpecific = to!string(token.unknown); break;
-					case Lexer.Token.Type.IDENTIFIER: typeSpecific = to!string(token.identifier); break;
-					case Lexer.Token.Type.KEYWORD: typeSpecific = to!string(token.keyword); break;
-					case Lexer.Token.Type.OPERATOR: typeSpecific = to!string(token.operator); break;
-					case Lexer.Token.Type.END_OF_FILE: typeSpecific = to!string(token.endOfFile); break;
-				}
+				//final switch (token.type) {
+				//	case Lexer.Token.Type.STRING_LITERAL: typeSpecific = to!string(token.stringLiteral); break;
+				//	case Lexer.Token.Type.CHARACTER_LITERAL: typeSpecific = to!string(token.characterLiteral); break;
+				//	case Lexer.Token.Type.NUMBER_LITERAL: typeSpecific = to!string(token.numberLiteral); break;
+				//	case Lexer.Token.Type.UNKNOWN: typeSpecific = to!string(token.unknown); break;
+				//	case Lexer.Token.Type.IDENTIFIER: typeSpecific = to!string(token.identifier); break;
+				//	case Lexer.Token.Type.KEYWORD: typeSpecific = to!string(token.keyword); break;
+				//	case Lexer.Token.Type.OPERATOR: typeSpecific = to!string(token.operator); break;
+				//	case Lexer.Token.Type.END_OF_FILE: typeSpecific = to!string(token.endOfFile); break;
+				//}
 				return format("%s(%d|%d:%d - %d|%d:%d <[%s]> %s)",
 					token.type,
 					token.position, 0, 0,
@@ -159,7 +159,7 @@ private {
 
 	TestCase stringLiteral(dstring code, dstring value, Lexer.Comment[] precedingComments = []) {
 		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.STRING_LITERAL, precedingComments);
-		expected.stringLiteral = value;
+		//expected.stringLiteral = value;
 		return new TestCase(code, [expected]);
 	}
 
@@ -284,6 +284,7 @@ private {
 unittest {
 	writeln("Lexer.Comment.sizeof: ", Lexer.Comment.sizeof);
 	writeln("Lexer.Token.sizeof: ", Lexer.Token.sizeof);
+	writeln("Lexer.Token2.sizeof: ", Lexer.Token2.sizeof);
 }
 
 
