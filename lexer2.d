@@ -60,31 +60,20 @@ struct Lexer {
 			}
 			ushort code;
 		}
+		NumberLiteralType numberLiteralType;
 
-		private enum POSITION_MASK = 0x00FFFFFFFFFFFFFF;  // TODO: use sizeof(size_t)
-		private enum STATIC_TOKEN_ID_MASK = 0xFF00000000000000;
-		private enum STATIC_TOKEN_ID_SHIFT = (size_t.sizeof - 1) * 8;
 
-		@property size_t position() const {
-			return positionAndStaticTokenId & POSITION_MASK;
-		}
-		@property size_t position(size_t value) {
-			assert((value & POSITION_MASK) == value);
-			positionAndStaticTokenId = (positionAndStaticTokenId & STATIC_TOKEN_ID_MASK) | value;
-			return position;
-		}
-
-		@property ubyte staticTokenId() const {
-			return (positionAndStaticTokenId & STATIC_TOKEN_ID_MASK) >> STATIC_TOKEN_ID_SHIFT;
-		}
-		@property ubyte staticTokenId(ubyte value) {
-			positionAndStaticTokenId = (positionAndStaticTokenId & POSITION_MASK) |
-					(cast(size_t)value << STATIC_TOKEN_ID_SHIFT);
-			return staticTokenId;
-		}
-
-		bool isStatic() const {
-			return positionAndStaticTokenId > POSITION_MASK;
+		enum NumberLiteralType : ubyte {
+			UNKNOWN,
+			INT,
+			LONG,
+			UNSIGNED,
+			LONG_UNSINGED,
+			FLOAT,
+			REAL,
+			IMAGINARY,
+			FLOAT_IMAGINARY,
+			REAL_IMAGINARY,
 		}
 
 		Comment[] comments() {
