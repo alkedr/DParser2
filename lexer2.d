@@ -34,12 +34,6 @@ struct Lexer {
 			}
 		}
 
-		dstring text() const {
-			uint startOffset = isDdoc ? 3 : 2;
-			uint endOffset = type == Type.LINE ? 1 : 2;
-			return codeSlice[startOffset .. $-endOffset];
-		}
-
 		bool isDdoc() const {
 			if (text.length == 0) return false;
 			if (type == Type.BLOCK) return text[0] == '*';
@@ -47,7 +41,14 @@ struct Lexer {
 			if (type == Type.NESTING_BLOCK) return text[0] == '+';
 			return false;
 		}
+
+		dstring text() const {
+			uint startOffset = isDdoc ? 3 : 2;
+			uint endOffset = type == Type.LINE ? 1 : 2;
+			return codeSlice[startOffset .. $-endOffset];
+		}
 	}
+
 
 	struct Token {
 		dstring codeSlice;
@@ -58,15 +59,38 @@ struct Lexer {
 				Type type;
 				ubyte staticTokenId;
 			}
-			ushort code;
+			ushort id;
 		}
-		NumberLiteralType numberLiteralType;
+		// to distinguish between integer and float literals
+		// if containsDot and suffixes conflict, containsDot wins
+		private bool containsDot;
 
+
+		enum Type : ubyte {
+			END_OF_FILE,        // codeSlice.length == 0
+			IDENTIFIER,         // first char is a-zA-Z_ and staticTokenId == 0
+			STRING_LITERAL,     // first char is ` " or first chars are r" x" q" q{
+			CHARACTER_LITERAL,  // first char is '
+			NUMBER_LITERAL,     // (first char is a number) or (first char is . and second char is a number)
+			KEYWORD,            // first char is a-z and staticTokenId > 0
+			OPERATOR,           // first char is not a-z and staticTokenId > 0
+		}
+
+		// Possible number literal suffixes:
+		//  - L - long or real
+		//  - u U  - unsigned int
+		//  - Lu LU uL UL  - unsigned long
+		//  - f F  - float
+		//  - i - imaginary
+		//  - fi Fi  - float imaginary
+		//  - Li  - real imaginary
+
+		auto x = 2.4U;
 
 		enum NumberLiteralType : ubyte {
-			UNKNOWN,
-			INT,
-			LONG,
+			UNKNOWN,         // type is not NUMBER_LITERAL
+			INT,             // doesn't contain dot and suffixes f F L i
+			LONG,            // doesn't contain dot and suffixes f F L i, contains suffix
 			UNSIGNED,
 			LONG_UNSINGED,
 			FLOAT,
@@ -80,16 +104,6 @@ struct Lexer {
 			assert(0);
 		}
 
-
-		enum Type : ubyte {
-			END_OF_FILE,        // codeSlice.length == 0
-			IDENTIFIER,         // first char is a-zA-Z_ and staticTokenId == 0
-			STRING_LITERAL,     // first char is ` " or first chars are r" x" q" q{
-			CHARACTER_LITERAL,  // first char is '
-			NUMBER_LITERAL,     // (first char is a number) or (first char is . and second char is a number)
-			KEYWORD,            // first char is a-z and staticTokenId > 0
-			OPERATOR,           // first char is not a-z and staticTokenId > 0
-		}
 	}
 
 
