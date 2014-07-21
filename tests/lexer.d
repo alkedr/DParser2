@@ -1,11 +1,12 @@
 module tests.lexer;
 
-import lexer;
+import lexer2;
 import std.stdio;
 import std.ascii;
 import std.algorithm;
 import std.array;
 import std.range : lockstep;
+import std.json;
 
 
 private {
@@ -24,22 +25,14 @@ private {
 
 	class TestCase {
 		dstring input;
-		Lexer.Token[] expectedTokens;
+		Lexer.Token expected;
 
-		this(dstring input, Lexer.Token[] expectedTokens...) {
+		this(dstring input, Lexer.Token expected) {
 			this.input = input;
-			this.expectedTokens = expectedTokens;
+			this.expected = expected;
 		}
 
-		Result run() {
-
-			static string succesfulComparison(string expected, string actual) {
-				return green(expected) ~ " " ~ green(actual);
-			}
-			static string failedComparison(string expected, string actual) {
-				return green(expected) ~ " " ~ red(actual);
-			}
-
+		bool run() {
 			string replaceUnprintable(dstring s) {
 				string result;
 				foreach (c; s) {
@@ -49,69 +42,21 @@ private {
 			}
 
 			string tokenToString(Lexer.Token token) {
-				string typeSpecific;
-				//final switch (token.type) {
-				//	case Lexer.Token.Type.STRING_LITERAL: typeSpecific = to!string(token.stringLiteral); break;
-				//	case Lexer.Token.Type.CHARACTER_LITERAL: typeSpecific = to!string(token.characterLiteral); break;
-				//	case Lexer.Token.Type.NUMBER_LITERAL: typeSpecific = to!string(token.numberLiteral); break;
-				//	case Lexer.Token.Type.UNKNOWN: typeSpecific = to!string(token.unknown); break;
-				//	case Lexer.Token.Type.IDENTIFIER: typeSpecific = to!string(token.identifier); break;
-				//	case Lexer.Token.Type.KEYWORD: typeSpecific = to!string(token.keyword); break;
-				//	case Lexer.Token.Type.OPERATOR: typeSpecific = to!string(token.operator); break;
-				//	case Lexer.Token.Type.END_OF_FILE: typeSpecific = to!string(token.endOfFile); break;
-				//}
-				return format("%s(%d|%d:%d - %d|%d:%d <[%s]> %s)",
-					token.type,
+				return format("%s(%d|%d:%d - %d|%d:%d <[%s]>)",
+					token.id,
 					token.position, 0, 0,
-					token.position + token.asString.length, 0, 0,
-					replaceUnprintable(token.asString),
-					typeSpecific
+					token.position + token.codeSlice.length, 0, 0,
+					replaceUnprintable(token.codeSlice)
 				);
 			}
 
-			Lexer.Token[] getTokens_manualFront() {
-				Lexer.Token[] result;
-				auto lexer = new Lexer(input);
-				do {
-					result ~= lexer.nextToken;
-				} while ((result.length < MAX_TOKENS_COUNT) && (result[$-1].type != Lexer.Token.Type.END_OF_FILE));
-				return result[0..$-1];  // remove END_OF_FILE token  // FIXME
+			auto lexer = new Lexer(input);
+			auto actual = lexer.nextToken;
+			if (tokenToString(actual) != tokenToString(expected)) {
+				return false;
+				writeln(green(tokenToString(expected)) ~ " " ~ red(tokenToString(actual)));
 			}
-
-			auto actualTokens = getTokens_manualFront();
-			auto result = new Result;
-			foreach (expected, actual; lockstep(expectedTokens, actualTokens)) {
-				if (tokenToString(expected) == tokenToString(actual)) {
-					result.report ~= succesfulComparison(tokenToString(expected), tokenToString(actual));
-				} else {
-					result.failed = true;
-					result.report ~= failedComparison(tokenToString(expected), tokenToString(actual));
-				}
-			}
-			if (expectedTokens.length > actualTokens.length) {
-				result.failed = true;
-				foreach (expected; expectedTokens[actualTokens.length..$]) {
-					result.report ~= failedComparison(tokenToString(expected), "<end of list>");
-				}
-			}
-			if (expectedTokens.length < actualTokens.length) {
-				result.failed = true;
-				foreach (actual; actualTokens[expectedTokens.length..$]) {
-					result.report ~= failedComparison("<end of list>", tokenToString(actual));
-				}
-			}
-			testsCount++;
-			if (result.failed) failedTestsCount++;
-			return result;
-		}
-
-		class Result {
-			bool failed = false;
-			string[] report;
-
-			override string toString() {
-				return failed ? red("FAIL") ~ "\nq{\n" ~ to!string(input) ~ "\n}\n  " ~ report.join("\n  ") ~ "\n\n" : "";
-			}
+			return true;
 		}
 	}
 
@@ -122,13 +67,13 @@ private {
 	//	return new TestCase(code, [expected]);
 	//}
 
-	TestCase whitespace(dstring code) {
-		return new TestCase(code, []);
-	}
+	//TestCase whitespace(dstring code) {
+	//	return new TestCase(code, []);
+	//}
 
-	TestCase endOfLine(dstring code) {
-		return new TestCase(code, []);
-	}
+	//TestCase endOfLine(dstring code) {
+	//	return new TestCase(code, []);
+	//}
 
 	//TestCase comment(Lexer.Token.Comment.Type type)(dstring code, dstring value) {
 	//	auto expected = Lexer.Token(code, 0, Lexer.Token.COMMENT);
@@ -149,76 +94,71 @@ private {
 	//	return comment!(Lexer.Token.Comment.Type.NESTING_BLOCK)("/+" ~ text ~ "+/", text);
 	//}
 
-	TestCase specialTokenSequence(dstring code) {
-		return new TestCase(code, []);
+	//TestCase specialTokenSequence(dstring code) {
+	//	return new TestCase(code, []);
+	//}
+
+	Lexer.Token token(dstring codeSlice, size_t position, ubyte id) {
+		auto result = Lexer.Token(id);
+		result.codeSlice = codeSlice;
+		result.position = position;
+		return result;
 	}
 
-	TestCase identifier(dstring code, Lexer.Comment[] precedingComments = []) {
-		return new TestCase(code, [Lexer.Token(code, 0, Lexer.Token.Type.IDENTIFIER, precedingComments)]);
+	TestCase identifier(dstring code) {
+		return new TestCase(code, token(code, 0, Lexer.Token.Type.IDENTIFIER));
 	}
 
-	TestCase stringLiteral(dstring code, dstring value, Lexer.Comment[] precedingComments = []) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.STRING_LITERAL, precedingComments);
-		//expected.stringLiteral = value;
-		return new TestCase(code, [expected]);
+	TestCase stringLiteral(dstring code, dstring value) {
+		return new TestCase(code, token(code, 0, Lexer.Token.Type.STRING_LITERAL));
 	}
 
-	TestCase wysiwygStringLiteral(dstring value, Lexer.Comment[] precedingComments = []) {
+	TestCase wysiwygStringLiteral(dstring value) {
 		return stringLiteral(`r"` ~ value ~ `"`, value);
 	}
 
-	TestCase alternateWysiwygStringLiteral(dstring value, Lexer.Comment[] precedingComments = []) {
+	TestCase alternateWysiwygStringLiteral(dstring value) {
 		return stringLiteral('`' ~ value ~ '`', value);
 	}
 
-	TestCase doubleQuotedStringLiteral(dstring code, dstring value, Lexer.Comment[] precedingComments = []) {
+	TestCase doubleQuotedStringLiteral(dstring code, dstring value) {
 		return stringLiteral('"' ~ code ~ '"', value);
 	}
 
-	TestCase doubleQuotedStringLiteral(dstring code, Lexer.Comment[] precedingComments = []) {
+	TestCase doubleQuotedStringLiteral(dstring code) {
 		return doubleQuotedStringLiteral(code, code);
 	}
 
-	TestCase hexStringLiteral(dstring hexText, dstring value, Lexer.Comment[] precedingComments = []) {
+	TestCase hexStringLiteral(dstring hexText, dstring value) {
 		return stringLiteral(`x"` ~ hexText ~ `"`, value);
 	}
 
-	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter, Lexer.Comment[] precedingComments = []) {
+	TestCase delimitedStringLiteral(dstring value, dstring openingDelimiter, dstring closingDelimiter) {
 		return stringLiteral(`q"` ~ openingDelimiter ~ value ~ closingDelimiter ~ `"`, value);
 	}
 
-	TestCase tokenStringLiteral(dstring value, Lexer.Comment[] precedingComments = []) {
+	TestCase tokenStringLiteral(dstring value) {
 		return stringLiteral("q{" ~ value ~ "}", value);
 	}
 
 	TestCase characterLiteral(Lexer.Token.CharWidth charWidth = Lexer.Token.CharWidth.ONE_BYTE)(
-					dstring code, dchar value, Lexer.Comment[] precedingComments = []
+					dstring code, dchar value
 	) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.CHARACTER_LITERAL, precedingComments);
-		expected.charWidth = charWidth;
-		expected.characterLiteral = value;
-		return new TestCase(code, [expected]);
+		return new TestCase(code, [token(code, 0, Lexer.Token.Type.CHARACTER_LITERAL)]);
 	}
 
 	TestCase numberLiteral(Lexer.Token.NumberLiteralType numberLiteralType = INT)(
-				dstring code, BigInt mantissa, long exponent = 0, Lexer.Comment[] precedingComments = []
+				dstring code, BigInt mantissa, long exponent = 0
 	) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.NUMBER_LITERAL, precedingComments);
-		expected.numberLiteral.mantissa = mantissa;
-		expected.numberLiteral.exponent = exponent;
-		return new TestCase(code, [expected]);
+		return new TestCase(code, [token(code, 0, Lexer.Token.Type.NUMBER_LITERAL)]);
 	}
 
-	TestCase keyword(dstring code, Lexer.Comment[] precedingComments = []) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.KEYWORD, precedingComments);
-		expected.staticTokenId = Lexer.Token.staticTokenIdFor(to!string(code));
-		return new TestCase(code, [expected]);
+	TestCase keyword(dstring code) {
+		return new TestCase(code, token(code, 0, Lexer.Token.idFor(to!string(code))));
 	}
 
-	TestCase operator(dstring code, Lexer.Comment[] precedingComments = []) {
-		auto expected = Lexer.Token(code, 0, Lexer.Token.Type.OPERATOR, precedingComments);
-		expected.staticTokenId = Lexer.Token.staticTokenIdFor(to!string(code));
-		return new TestCase(code, [expected]);
+	TestCase operator(dstring code) {
+		return new TestCase(code, token(code, 0, Lexer.Token.idFor(to!string(code))));
 	}
 
 	//TestCase endOfFile(dstring code) {
@@ -227,7 +167,7 @@ private {
 
 	// TODO: keywords, operators
 
-
+/*
 	TestCase concatenateTwoTestCases(TestCase a, TestCase b) {
 		foreach (expectedToken; b.expectedTokens) {
 			expectedToken.position += a.input.length;
@@ -253,15 +193,11 @@ private {
 		}
 		return result;
 	}
-
+*/
 	uint test(string suiteName, TestCase[] testCases) {
 		uint failedTestsCount = 0;
 		foreach (testCase; testCases) {
-			auto testCaseResult = testCase.run;
-			if (testCaseResult.failed) {
-				failedTestsCount++;
-				writeln(testCaseResult);
-			}
+			if (!testCase.run) failedTestsCount++;
 		}
 		if (failedTestsCount == 0) {
 			writeln(green(format("%s: %3d tests passed", suiteName, testCases.length)));
@@ -284,7 +220,6 @@ private {
 unittest {
 	writeln("Lexer.Comment.sizeof: ", Lexer.Comment.sizeof);
 	writeln("Lexer.Token.sizeof: ", Lexer.Token.sizeof);
-	writeln("Lexer.Token2.sizeof: ", Lexer.Token2.sizeof);
 }
 
 
@@ -354,9 +289,9 @@ unittest {
 		return result;
 	}
 
-	auto whitespaces = casesOf!whitespace(["\u0020", "\u0009", "\u000B", "\u000C"]);
+	//auto whitespaces = casesOf!whitespace(["\u0020", "\u0009", "\u000B", "\u000C"]);
 
-	auto lineBreaks = casesOf!endOfLine(["\u000D", "\u000A", "\u000D\u000A", "\u2028", "\u2029"]);
+	//auto lineBreaks = casesOf!endOfLine(["\u000D", "\u000A", "\u000D\u000A", "\u2028", "\u2029"]);
 
 	auto commonCommentTexts = [
 		"",
@@ -386,10 +321,10 @@ unittest {
 	//	"qwe //+ rty +/ uio",
 	//]);
 
-	auto specialTokenSequences = casesOf!specialTokenSequence([
-		`#line 5\n`,
-		`#line "filename" 5\n`,
-	]);
+	//auto specialTokenSequences = casesOf!specialTokenSequence([
+	//	`#line 5\n`,
+	//	`#line "filename" 5\n`,
+	//]);
 
 	auto identifiers = casesOf!identifier([
 		// basic rules
@@ -476,10 +411,11 @@ unittest {
 	]);
 
 
+// TODO: check Lexer.position after parsing
 
 
-	test("Whitespace                           ", whitespaces);
-	test("End of line                          ", lineBreaks);
+	//test("Whitespace                           ", whitespaces);
+	//test("End of line                          ", lineBreaks);
 //test("Comments / Block                     ", blockComments);
 //test("Comments / Line                      ", lineComments);
 //test("Comments / Nesting block             ", nestingBlockComments);
@@ -501,3 +437,85 @@ unittest {
 	test("Keywords                             ", keywords);
 	test("Operators                            ", operators);
 }
+
+
+
+/*
+private {
+	struct TestRunner {
+		uint testsCount;
+		string[] failReports;
+
+		struct Expected {
+			Lexer.Token token;
+			size_t lexerPosition;
+			Lexer.Comment[] comments;
+			Lexer.Coordinates firstCharCoordinates;
+			Lexer.Coordinates charAfterLastCoordinates;
+		}
+
+		static string replaceUnprintable(dstring s) {
+			string result;
+			foreach (c; s) {
+				result ~= (isPrintable(c) ? to!string(c) : format("#(%x)", c));
+			}
+			return result;
+		}
+
+		static JSONValue getJson(Lexer.Comment comment) {
+			return JSONValue([
+					"codeSlice": JSONValue(replaceUnprintable(token.codeSlice)),
+					"position": JSONValue(token.position),
+					"id": JSONValue(token.id),
+					"numberLiteralType": JSONValue(token.numberLiteralType),
+					"charWidth": JSONValue(token.charWidth),
+					"lexerPosition": JSONValue(lexer.position),
+					"comments": JSONValue(lexer.commentsPrecedingToken(token).map!(c => getJson(c)).array),
+					"line": JSONValue(lexer.coordinates(token).line),
+					"column": JSONValue(lexer.coordinates(token).column),
+				]);
+		}
+
+		static JSONValue * getJson(Lexer lexer, Lexer.Token token) {
+			return new JSONValue([
+					"codeSlice": JSONValue(replaceUnprintable(token.codeSlice)),
+					"position": JSONValue(token.position),
+					"id": JSONValue(token.id),
+					"numberLiteralType": JSONValue(token.numberLiteralType),
+					"charWidth": JSONValue(token.charWidth),
+					"lexerPosition": JSONValue(lexer.position),
+					"comments": JSONValue(lexer.commentsPrecedingToken(token).map!(c => getJson(c)).array),
+					"line": JSONValue(lexer.coordinates(token).line),
+					"column": JSONValue(lexer.coordinates(token).column),
+				]);
+		}
+
+		void run(string input, Expected[] expecteds) {
+			string failReport = "q{" ~ input ~ "}\n";
+
+			testsCount++;
+			auto lexer = Lexer(to!dstring(input));
+
+			foreach (expected; expecteds) {
+				auto token = lexer.nextToken;
+			}
+
+			import std.file;
+		}
+	}
+
+
+
+}
+*/
+
+
+
+// TODO:
+//   tests for skipping spaces and line breaks
+//   tests for lexing just one token (lexer.code == lexer.nextToken.codeSlice)
+//   tests for lexing several tokens (no need to tests all possible combinations)
+//   tests for end of file
+//   tests for end of line, line numbers
+//   tests for comments
+//   tests for infinite END_OF_FILE at end of file
