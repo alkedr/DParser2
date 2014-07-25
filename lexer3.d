@@ -11,38 +11,30 @@ import std.array;
 
 struct Lexer {
 	dstring code;
-	size_t position;
+	Coordinates currentCoordinates;
 
 	this(dstring code) {
 		this.code = code ~ 0;
 	}
 
 	immutable struct Coordinates {
-		immutable size_t line;
-		immutable size_t column;
+		size_t position;
+		size_t line;
+		size_t column;
 	}
 
 	struct Comment {
-		private immutable Lexer * lexer;
-		immutable size_t startPosition;
-		immutable size_t endPosition;
-
-		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		dstring code;
+		Coordinates start;
+		Coordinates end;
 	}
 
 	struct Token {
-		private Lexer * lexer;
-		immutable size_t startPosition;
-		immutable size_t endPosition;
-		private immutable uint commentBlockId;
+		dstring code;
+		Coordinates start;
+		Coordinates end;
+		Comment[] comments;
 		immutable uint id;
-
-		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		const(Comment[]) comments() immutable { return lexer.commentBlocks[commentBlockId]; }
-		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
 
 		enum Type : ubyte {
 			END_OF_FILE,
@@ -62,7 +54,7 @@ struct Lexer {
 
 
 	Token nextToken() {
-		auto commentBlockId = lexCommentsAndSkipWhitespaceAndLineBreaks();
+		Comment[] comments = lexCommentsAndSkipWhitespaceAndLineBreaks();
 		auto startPosition = position;
 		auto id = lexToken();
 		// TODO: detect __EOF__?
@@ -75,10 +67,6 @@ struct Lexer {
 		size_t startFromLine;
 		size_t newLineNumber;
 	}
-
-	private Comment[][] commentBlocks = [[]];
-	private size_t[] lineStarts = [0];
-	private LineNumerationChange[] lineNumerationChanges = [{0, 0}];
 
 
 	private Coordinates coordinates(size_t position) const {
@@ -158,8 +146,8 @@ struct Lexer {
 
 
 	// returns commentBlockId
-	private uint lexCommentsAndSkipWhitespaceAndLineBreaks() {
-		return 0;  // TODO
+	private Comment[] lexCommentsAndSkipWhitespaceAndLineBreaks() {
+		return [];  // TODO
 	}
 
 
@@ -287,3 +275,5 @@ unittest {
 //		assert(id == Lexer.Token.idFor(tokenString));
 //	}
 //}
+
+
