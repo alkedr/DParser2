@@ -18,12 +18,13 @@ struct Lexer {
 	}
 
 	immutable struct Coordinates {
+		string fileName;
 		immutable size_t line;
 		immutable size_t column;
 	}
 
 	struct Comment {
-		private immutable Lexer * lexer;
+		private const(Lexer*) lexer;
 		immutable size_t startPosition;
 		immutable size_t endPosition;
 
@@ -33,7 +34,7 @@ struct Lexer {
 	}
 
 	struct Token {
-		private Lexer * lexer;
+		private const(Lexer*) lexer;
 		immutable size_t startPosition;
 		immutable size_t endPosition;
 		private immutable uint commentBlockId;
@@ -71,9 +72,11 @@ struct Lexer {
 
 
 
+	// For '#line NNN'
 	private struct LineNumerationChange {
 		size_t startFromLine;
 		size_t newLineNumber;
+		string fileName;
 	}
 
 	private Comment[][] commentBlocks = [[]];
@@ -82,7 +85,7 @@ struct Lexer {
 
 
 	private Coordinates coordinates(size_t position) const {
-		return Coordinates(0, 0); // TODO
+		return Coordinates("", 0, 0); // TODO
 	}
 
 
@@ -105,13 +108,13 @@ struct Lexer {
 				new CodeGenerator()
 					.onStaticTokens!operators(q{return Token.idFor(`%s`);})
 					.on!"`" (q{skipToChar!('`'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`"` (q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!"'" (q{skipToChar!('\''); position++; return Token.Type.CHARACTER_LITERAL;})
+					.on!`"` (q{skipToCharWithEscapeSequences!('"'); position++; return Token.Type.STRING_LITERAL;})
+					.on!"'" (q{skipToCharWithEscapeSequences!('\''); position++; return Token.Type.CHARACTER_LITERAL;})
 					.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
 					.onOneOfChars!"123456789"(q{return lexDecimalNumberLiteral;})
 					.on!"."(
 						new CodeGenerator()
-							.onOneOfChars!"123456789"(q{return lexDecimalFloatThatStartsWithDot;})
+							.onOneOfChars!"0123456789"(q{return lexDecimalFloatThatStartsWithDot;})
 							.generateCode(q{return Token.idFor(`.`);})
 					)
 					.onOneOfChars!"\x00\x1A"(q{return Token.Type.END_OF_FILE;})
@@ -134,9 +137,28 @@ struct Lexer {
 		if ((code[position] == '.') && (isDigit(code[position+1]))) {
 			position++;
 			skipCharsWhile!"isDigit(code[position])";
+			skipCharsWhile!"isAlpha(code[position])";
+			return Token.Type.FLOAT_LITERAL;
+		} else {
+			skipCharsWhile!"isAlpha(code[position])";
+			return Token.Type.INTEGER_LITERAL;
 		}
-		skipCharsWhile!"isAlpha(code[position])";
+	}
+
+	private uint lexBinaryNumberLiteral() {
+		skipCharsWhile!"(code[position] == '0') || (code[position] == '1')";
 		return Token.Type.INTEGER_LITERAL;
+	}
+
+	private uint lexHexNumberLiteral() {
+		skipCharsWhile!"isHexDigit(code[position])";
+		if (code[position] == '.') {
+			position++;
+			skipCharsWhile!"isHexDigit(code[position])";
+			return Token.Type.FLOAT_LITERAL;
+		} else {
+			return Token.Type.INTEGER_LITERAL;
+		}
 	}
 
 	private uint lexDecimalFloatThatStartsWithDot() {
@@ -147,12 +169,11 @@ struct Lexer {
 
 	private uint lexNumberLiteralThatStartsWithZero() {
 		switch (code[position++]) {
-			case 'b': skipCharsWhile!"(code[position] == '0') || (code[position] == '1')"; break;
-			case 'x': skipCharsWhile!"isHexDigit(code[position])"; break;
-			default:
-				// error
+			case 'b': case 'B': return lexBinaryNumberLiteral;
+			case 'x': case 'X': return lexHexNumberLiteral;
+			case '.': return lexDecimalFloatThatStartsWithDot;
+			default: position--; break;
 		}
-		skipCharsWhile!"isAlpha(code[position])";
 		return Token.Type.INTEGER_LITERAL;
 	}
 
@@ -163,8 +184,9 @@ struct Lexer {
 	}
 
 
-	private void skipCharsWhile(string contition)() {
+	private void skipCharsWhile(string contition, string skipCode = "")() {
 		while ((position < code.length) && (mixin(contition))) {   // TODO: newlines
+			mixin(skipCode);
 			position++;
 		}
 	}
@@ -173,6 +195,10 @@ struct Lexer {
 		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator));
 	}
 
+	private void skipToCharWithEscapeSequences(char terminator)() {
+		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator),
+			`if (code[position] == '\\') position++;`);
+	}
 
 
 	private static bool isIdentifierChar(dchar c) {
@@ -270,20 +296,255 @@ struct Lexer {
 }
 
 
+
+
+
+
+
+
+
+
+
 unittest {
 	writeln("Lexer.Comment.sizeof: ", Lexer.Comment.sizeof);
 	writeln("Lexer.Token.sizeof: ", Lexer.Token.sizeof);
 }
 
 
+// single tokens
+unittest {
 
-//unittest {
-//	string[] tokens = Lexer.keywords;
+	static string escapeSequence(uint number, string s) {
+		return format("\033[%dm%s\033[0m", number, s);
+	}
+	static string red(string s) { return escapeSequence(33, s); }
+	static string green(string s) { return escapeSequence(32, s); }
 
-//	foreach (tokenString; tokens) {
-//		auto lexer = Lexer(to!dstring(tokenString));
-//		auto id = lexer.nextToken.id;
-//		writeln(tokenString, " - ", id);
-//		assert(id == Lexer.Token.idFor(tokenString));
-//	}
-//}
+	// returns empty string if test passed
+	static string testCase(dstring code, int id) {
+		string report = to!string(code) ~ "\n";
+		bool failed = false;
+
+		static string structTokenToString(Lexer.Token token) {
+			return format("%d(%d..%d, %d)", token.id, token.startPosition, token.endPosition, token.commentBlockId);
+		}
+
+		void assertEquals(Lexer.Token actual, Lexer.Token expected) {
+			auto expectedString = structTokenToString(expected);
+			auto actualString = structTokenToString(actual);
+			if (actualString == expectedString) {
+				report ~= green(actualString);
+			} else {
+				failed = true;
+				report ~= green(expectedString) ~ " " ~ red(actualString);
+			}
+			report ~= "\n";
+		}
+
+		auto lexer = Lexer(code);
+		assertEquals(lexer.nextToken, Lexer.Token(null, 0, code.length, 0, id));
+		assertEquals(lexer.nextToken, Lexer.Token(null, code.length, code.length+1, 0, Lexer.Token.Type.END_OF_FILE));
+
+		return failed ? report ~ "\n" : "";
+	}
+
+	static void test(string name, int[dstring] cases) {
+		string[] reports;
+		foreach (code, id; cases) {
+			reports ~= testCase(code, id);
+		}
+		auto passedCount = reports.count!empty;
+		auto titleString = format("%s %3d / %3d", name, passedCount, cases.length);
+		if (passedCount == cases.length) {
+			writeln(green(titleString));
+		} else {
+			writeln(red(titleString));
+			writeln(reports.join("\n"));
+		}
+	}
+
+
+
+	static int[dstring] casesOf(uint id)(string[] codes) {
+		int[dstring] result;
+		foreach (code; codes) {
+			result[to!dstring(code)] = id;
+		}
+		return result;
+	}
+
+	static int[dstring] staticTokens() {
+		int[dstring] result;
+		foreach (staticToken; Lexer.staticTokens) {
+			result[to!dstring(staticToken)] = Lexer.Token.idFor(staticToken);
+		}
+		return result;
+	}
+
+	auto identifiers = casesOf!(Lexer.Token.Type.IDENTIFIER)([
+		// basic rules
+		"simpleIdentifier",
+		"_01234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM",
+		"Aa1",
+		"_1",
+		"_",
+
+		// distinction from string literals ( r" x" q" q{ )
+		"r",
+		"x",
+		"q",
+		"r_",
+		"x_",
+		"q_",
+
+		// distinction from keywords
+		"abstract_",
+		"abstract1",
+		"abstracta",
+		"abstractA",
+		"_abstract",
+		"aabstract",
+		"Aabstract",
+	]);
+
+	auto wysiwygStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+		`r""`,
+		`r"string literal"`,
+		`r"string literal with ŪŅİĆŌĐĒ symbols"`,
+		`r"\"`,
+		`r"\\"`,
+		`r"r"`,
+	]);
+
+	auto alternateWysiwygStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+		"``",
+		"`string literal`",
+		"`string literal with ŪŅİĆŌĐĒ symbols`",
+		"`\\`",
+		"`\\\\`",
+	]);
+
+	auto doubleQuotedStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+		`""`,
+		`"string literal"`,
+		`"string literal with ŪŅİĆŌĐĒ symbols"`,
+		`"\\"`,
+		`"\\\\"`,
+		`"\""`,
+		`"\"\""`,
+	]);
+
+	auto hexStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+		`""`,
+		`"0123456789ABCDEF"`,
+		`"01 23	45 67 89 AB CD EF"`,
+	]);
+
+	auto delimitedStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+		// identifier delimiters
+		`q"EOS\nEOS"`,
+
+		// char delimiters
+		`q"//`,
+
+		// nesting delimiters
+		`q"()"`,
+		`q"[]"`,
+		`q"<>"`,
+		`q"{}"`,
+	]);
+
+	// TODO: commented '{' and '}'
+	auto tokenStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+		`q{}`,
+		`q{"string literal"}`,
+		`q{"string literal with ŪŅİĆŌĐĒ symbols"}`,
+		`q{abstract}`,
+		`q{;}`,
+		`q{{{}{}}}`,
+	]);
+
+	auto characterLiterals = casesOf!(Lexer.Token.Type.CHARACTER_LITERAL)([
+		`'a'`,
+		`'\''`,
+		`'\U01234567'`,
+	]);
+
+	auto decimalIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
+		"0",
+		"1",
+		"12345678900987654321",
+	]);
+
+	auto binaryIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
+		"0b0",
+		"0b1",
+		"0b101010101",
+		"0b000101010101",
+	]);
+
+	auto hexIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
+		"0x0",
+		"0x1",
+		"0x0123456789ABCDEFabcdef",
+	]);
+
+	auto decimalFloatLiterals = casesOf!(Lexer.Token.Type.FLOAT_LITERAL)([
+		".0",
+		".1",
+		"0.0",
+		"0.1",
+		"1.0",
+		"1.1",
+		"1234567890.0",
+		"0.1234567890",
+
+		//"0f",
+		//"1f",
+		//"12345678900987654321f",
+
+		//"0d",
+		//"1d",
+		//"12345678900987654321d",
+	]);
+
+	auto hexFloatLiterals = casesOf!(Lexer.Token.Type.FLOAT_LITERAL)([
+		"0x.0",
+		"0x.1",
+		"0x0.0",
+		"0x0.1",
+		"0x1.0",
+		"0x1.1",
+		"0x1234567890abcdef.0",
+		"0x0.1234567890abcdef",
+	]);
+
+	auto imaginaryFloatLiterals = casesOf!(Lexer.Token.Type.FLOAT_LITERAL)([
+		"0i",
+		"1i",
+	]);
+
+
+// TODO: check unexpected end of file error
+// TODO: CHECK ERRORS!
+// TODO: check line breaks inside literals
+// TODO: check suffixes (string, char, int, float, imaginary)
+// TODO: _ в числах
+
+
+	test("Identifiers                          ", identifiers);
+	test("Literals / String / Wysiwyg          ", wysiwygStringLiterals);
+	test("Literals / String / Alternate wysiwyg", alternateWysiwygStringLiterals);
+	test("Literals / String / Double quoted    ", doubleQuotedStringLiterals);
+	test("Literals / String / Hexadecimal      ", hexStringLiterals);
+//test("Literals / String / Delimited        ", delimitedStringLiterals);
+	test("Literals / String / Token            ", tokenStringLiterals);
+	test("Literals / Character                 ", characterLiterals);
+	test("Literals / Integer / Decimal         ", decimalIntegerLiterals);
+	test("Literals / Integer / Binary          ", binaryIntegerLiterals);
+	test("Literals / Integer / Hexadecimal     ", hexIntegerLiterals);
+	test("Literals / Float / Decimal           ", decimalFloatLiterals);
+	test("Literals / Float / Hexadecimal       ", hexFloatLiterals);
+//test("Literals / Float / Imaginary         ", imaginaryFloatLiterals);
+	test("Keywords and operators               ", staticTokens);
+}
