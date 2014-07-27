@@ -66,10 +66,12 @@ struct Lexer {
 		auto commentBlockId = lexCommentsAndSkipWhitespaceAndLineBreaks();
 		auto startPosition = position;
 		auto id = lexToken();
-		// TODO: detect __EOF__?
 		return Token(&this, startPosition, position, commentBlockId, id);
 	}
 
+	Coordinates coordinates(size_t position) const {
+		return Coordinates("", 0, 0); // TODO
+	}
 
 
 	// For '#line NNN'
@@ -84,34 +86,99 @@ struct Lexer {
 	private LineNumerationChange[] lineNumerationChanges = [{0, 0}];
 
 
-	private Coordinates coordinates(size_t position) const {
-		return Coordinates("", 0, 0); // TODO
-	}
-
 
 	private uint lexToken() {
-		mixin(
-			new CodeGenerator()
+
+		//string[string[]] rules = [
+		//	[`r"`, `x"`]: q{ lexStringLiteral!'"' },
+		//	[`q{`]: q{ lexTokenStringLiteral },
+		//	[`q"`]: q{ lexDelimitedStringLiteral },
+		//	["`"]: q{ lexStringLiteral!'`' },
+		//	[`"`]: q{ lexStringLiteralWithEscapeSequences!'"' },
+		//	[`'`]: q{ lexStringLiteralWithEscapeSequences!'\'' },
+		//	[`0`]: q{ lexNumberLiteralThatStartsWithZero },
+		//	[`1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`]: q{ lexDecimalNumberLiteral },
+		//	[`.`]: q{ lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot },
+		//	[`\x00`, `\x1A`]: q{ Token.Type.END_OF_FILE },
+		//];
+
+		static class CodeGenerator {
+			private string code = "";
+			private CodeGenerator[string] cases;
+
+			private CodeGenerator getCodeGeneratorForCase(string caseString) {
+				if (caseString !in cases) cases[caseString] = new CodeGenerator;
+				return cases[caseString];
+			}
+
+			CodeGenerator on(string charSequence, string code) {
+				if (charSequence.length == 0) {
+					this.code = code;
+				} else {
+					getCodeGeneratorForCase(format(`case'\x%02X':`, charSequence[0])).on(charSequence[1..$], code);
+				}
+				return this;
+			}
+
+			CodeGenerator on(string charSequence)(string code) {
+				return on(charSequence, code);
+			}
+
+			CodeGenerator onStaticTokens(alias staticTokens)(string codeFormatString) {
+				foreach (staticToken; staticTokens) {
+					on(staticToken, format(codeFormatString, staticToken));
+				}
+				return this;
+			}
+
+			string generateCode(bool topLevel = true) const {
+				auto result = "";
+				if (cases.length == 0) {
+					result = code;
+				} else {
+					if (!topLevel) result = "switch(code[position++]){";
+					foreach (key, value; cases) {
+						result ~= key ~ value.generateCode(false) ~ "break;";
+					}
+					if (!topLevel) result ~= "default:position--;" ~ code ~ "}";
+				}
+				return result;
+			}
+		}
+
+		switch (code[position++]) {
+			mixin(new CodeGenerator()
 				.onStaticTokens!keywords(q{if (!isIdentifierChar(code[position])) return Token.idFor(`%s`);})
 				.onStaticTokens!operators(q{return Token.idFor(`%s`);})
-				// TODO: delimited string literal
-				.on!`r"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-				.on!`x"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-				.on!`q"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-				.on!"q{"(q{skipTokenStringLiteral; return Token.Type.STRING_LITERAL;})
-				.on!"`" (q{skipToChar!('`'); position++; return Token.Type.STRING_LITERAL;})
-				.on!`"` (q{skipToCharWithEscapeSequences!'"'; position++; return Token.Type.STRING_LITERAL;})
-				.on!"'" (q{skipToCharWithEscapeSequences!'\''; position++; return Token.Type.CHARACTER_LITERAL;})
-				.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
-				.onOneOfChars!"123456789"(q{return lexDecimalNumberLiteral;})
-				.on!"."(
-					new CodeGenerator()
-						.onOneOfChars!"0123456789"(q{return lexDecimalFloatThatStartsWithDot;})
-						.generateCode(q{return Token.idFor(`.`);})
-				)
-				.onOneOfChars!"\x00\x1A"(q{return Token.Type.END_OF_FILE;})
+				//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
+				.on!`r"`(q{ return lexStringLiteral!'"'; })
+				.on!`x"`(q{ return lexStringLiteral!'"'; })
+				.on!`q"`(q{ return lexDelimitedStringLiteral; })
+				.on!"q{"(q{ return lexTokenStringLiteral; })
+				.on!"."(q{ return lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
 				.generateCode
-		);
+			);
+
+			case '`': return lexStringLiteral!'`';
+			case '"': return lexStringLiteralWithEscapeSequences!'"';
+			case '\'': return lexCharacterLiteral;
+
+			case '0':
+				switch (code[position++]) {
+					case 'b': case 'B': return lexBinaryNumberLiteral;
+					case 'x': case 'X': return lexHexNumberLiteral;
+					case '.': return lexDecimalFloatThatStartsWithDot;
+					default: position--; break;
+				} // fallthrough is intentional
+			case '1': .. case '2':
+				return lexDecimalNumberLiteral;
+
+			case '\x00':
+			case '\x1A':
+				return Token.Type.END_OF_FILE;
+
+			default: break;
+		}
 
 		if ((position == 0) || isIdentifierChar(code[position-1])) {
 			skipCharsWhile!"isIdentifierChar(code[position])";
@@ -121,13 +188,43 @@ struct Lexer {
 		}
 	}
 
-	private void skipTokenStringLiteral() {
+	private uint lexStringLiteral(char terminator)() {
+		skipToChar!terminator;
+		position++;
+		return Token.Type.STRING_LITERAL;
+	}
+
+	private uint lexDelimitedStringLiteral() {
+		// TODO
+		skipToChar!('"');
+		position++;
+		return Token.Type.STRING_LITERAL;
+	}
+
+	private uint lexStringLiteralWithEscapeSequences(char terminator)() {
+		skipToCharWithEscapeSequences!(terminator);
+		position++;
+		return Token.Type.STRING_LITERAL;
+	}
+
+	private uint lexCharacterLiteral() {
+		skipToCharWithEscapeSequences!('\'');
+		position++;
+		return Token.Type.CHARACTER_LITERAL;
+	}
+
+	private uint lexTokenStringLiteral() {
 		uint depth = 1;
 		while (depth > 0) {
 			auto token = nextToken;
 			if (token.id == Token.idFor("{")) depth++;
 			if (token.id == Token.idFor("}")) depth--;
 		}
+		return Token.Type.STRING_LITERAL;
+	}
+
+	private uint lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot() {
+		return isDigit(code[position]) ? lexDecimalFloatThatStartsWithDot : Token.idFor(`.`);
 	}
 
 	private uint lexDecimalNumberLiteral() {
@@ -178,6 +275,10 @@ struct Lexer {
 
 	// returns commentBlockId
 	private uint lexCommentsAndSkipWhitespaceAndLineBreaks() {
+		//switch (code[position++]) {
+		//	case '/': lexComment;
+
+		//}
 		return 0;  // TODO
 	}
 
@@ -189,13 +290,12 @@ struct Lexer {
 		}
 	}
 
-	private void skipToChar(char terminator)() {
-		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator));
+	private void skipToChar(char terminator, string skipCode = "")() {
+		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator), skipCode);
 	}
 
 	private void skipToCharWithEscapeSequences(char terminator)() {
-		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator),
-			`if (code[position] == '\\') position++;`);
+		skipToChar!(terminator, `if (code[position] == '\\') position++;`);
 	}
 
 
@@ -209,56 +309,6 @@ struct Lexer {
 
 
 
-
-	private class CodeGenerator {
-		private string code = "";
-		private CodeGenerator[string] cases;
-
-		private CodeGenerator getCodeGeneratorForCase(string caseString) {
-			if (caseString !in cases) cases[caseString] = new CodeGenerator;
-			return cases[caseString];
-		}
-
-		CodeGenerator on(string charSequence, string code) {
-			if (charSequence.length == 0) {
-				this.code = code;
-			} else {
-				getCodeGeneratorForCase(format(`case'\x%02X':`, charSequence[0])).on(charSequence[1..$], code);
-			}
-			return this;
-		}
-
-		CodeGenerator on(string charSequence)(string code) {
-			return on(charSequence, code);
-		}
-
-		CodeGenerator onOneOfChars(string chars)(string code) {
-			getCodeGeneratorForCase(chars.map!(c => format(`case'\x%02X':`, c)).join).code = code;
-			return this;
-		}
-
-		CodeGenerator onStaticTokens(alias staticTokens)(string codeFormatString) {
-			foreach (staticToken; staticTokens) {
-				on(staticToken, format(codeFormatString, staticToken));
-			}
-			return this;
-		}
-
-		string generateCode() const {
-			auto result = "";
-			if (cases.length == 0) {
-				result = code;
-			} else {
-				result = "switch(code[position++]){";
-				foreach (key, value; cases) {
-					result ~= key ~ value.generateCode() ~ "break;";
-				}
-				result ~= "default:position--;" ~ code;
-				result ~= "}";
-			}
-			return result;
-		}
-	}
 
 
 	private enum keywords = [
@@ -528,6 +578,7 @@ unittest {
 // TODO: check line breaks inside literals
 // TODO: check suffixes (string, char, int, float, imaginary)
 // TODO: _ в числах
+// TODO: test  "1..2" - 3 tokens
 
 
 	test("Identifiers                          ", identifiers);
