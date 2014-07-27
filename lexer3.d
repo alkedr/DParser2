@@ -11,7 +11,7 @@ import std.array;
 
 struct Lexer {
 	dstring code;
-	Coordinates currentCoordinates;
+	size_t position;
 
 	this(dstring code) {
 		this.code = code ~ 0;
@@ -53,24 +53,21 @@ struct Lexer {
 	}
 
 
+	Token[] tokens() {
+		Token[] result;
+		do {
+			result ~= nextToken;
+		} while (result[$-1].id != Token.Type.END_OF_FILE);
+		return result;
+	}
+
+
 	Token nextToken() {
 		Comment[] comments = lexCommentsAndSkipWhitespaceAndLineBreaks();
 		auto startPosition = position;
 		auto id = lexToken();
 		// TODO: detect __EOF__?
-		return Token(&this, startPosition, position, commentBlockId, id);
-	}
-
-
-
-	private struct LineNumerationChange {
-		size_t startFromLine;
-		size_t newLineNumber;
-	}
-
-
-	private Coordinates coordinates(size_t position) const {
-		return Coordinates(0, 0); // TODO
+		return Token(code[startPosition..position], Coordinates(startPosition), Coordinates(position), comments, id);
 	}
 
 
@@ -79,9 +76,9 @@ struct Lexer {
 			mixin(
 				new CodeGenerator()
 					.onStaticTokens!keywords(q{if (!isIdentifierChar(code[position])) return Token.idFor(`%s`);})
-					.on!`r"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`x"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`q"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
+					.on!`r"`(q{skipToCharAfter!('"'); return Token.Type.STRING_LITERAL;})
+					.on!`x"`(q{skipToCharAfter!('"'); return Token.Type.STRING_LITERAL;})
+					.on!`q"`(q{skipToCharAfter!('"'); return Token.Type.STRING_LITERAL;})
 					.on!"q{"(q{skipTokenStringLiteral; return Token.Type.STRING_LITERAL;})
 					// TODO: delimited string literal
 					.generateCode(q{})
@@ -92,9 +89,9 @@ struct Lexer {
 			mixin(
 				new CodeGenerator()
 					.onStaticTokens!operators(q{return Token.idFor(`%s`);})
-					.on!"`" (q{skipToChar!('`'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`"` (q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!"'" (q{skipToChar!('\''); position++; return Token.Type.CHARACTER_LITERAL;})
+					.on!"`" (q{skipToCharAfter!('`'); return Token.Type.STRING_LITERAL;})
+					.on!`"` (q{skipToCharAfter!('"'); return Token.Type.STRING_LITERAL;})
+					.on!"'" (q{skipToCharAfter!('\''); return Token.Type.CHARACTER_LITERAL;})
 					.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
 					.onOneOfChars!"123456789"(q{return lexDecimalNumberLiteral;})
 					.on!"."(
@@ -159,6 +156,11 @@ struct Lexer {
 
 	private void skipToChar(char terminator)() {
 		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator));
+	}
+
+	private void skipToCharAfter(char terminator)() {
+		skipToChar!terminator;
+		position++;
 	}
 
 
@@ -258,22 +260,169 @@ struct Lexer {
 }
 
 
+
+
+
+
+
 unittest {
 	writeln("Lexer.Comment.sizeof: ", Lexer.Comment.sizeof);
 	writeln("Lexer.Token.sizeof: ", Lexer.Token.sizeof);
 }
 
 
+unittest {
 
-//unittest {
-//	string[] tokens = Lexer.keywords;
+	import std.json;
+	import std.process;
 
-//	foreach (tokenString; tokens) {
-//		auto lexer = Lexer(to!dstring(tokenString));
-//		auto id = lexer.nextToken.id;
-//		writeln(tokenString, " - ", id);
-//		assert(id == Lexer.Token.idFor(tokenString));
+
+	static string replaceUnprintable(dstring s) {
+		return s.map!(c => isPrintable(c) ? to!string(c) : format("#(%x)", c)).join;
+	}
+
+	static JSONValue coordinatesToJson(Lexer.Coordinates value) {
+		return JSONValue([
+			"position": JSONValue(value.position),
+			"line": JSONValue(value.line),
+			"column": JSONValue(value.column),
+		]);
+	}
+
+	static JSONValue commentToJson(Lexer.Comment value) {
+		return JSONValue([
+			"code": JSONValue(replaceUnprintable(value.code)),
+			"start": coordinatesToJson(value.start),
+			"end": coordinatesToJson(value.end),
+		]);
+	}
+
+	static JSONValue tokenToJson(Lexer.Token value) {
+		return JSONValue([
+			"code": JSONValue(replaceUnprintable(value.code)),
+			"start": coordinatesToJson(value.start),
+			"end": coordinatesToJson(value.end),
+			"comments": JSONValue(value.comments.map!commentToJson.array),
+			"id": JSONValue(value.id),
+		]);
+	}
+
+	static string tokensToJson(Lexer.Token[] value) {
+		return JSONValue(value.map!tokenToJson.array).toPrettyString;
+	}
+
+	// returns true if expected == actual
+	static bool testImpl(Lexer.Token[] expected, Lexer.Token[] actual) {
+		auto expectedJson = tokensToJson(expected);
+		auto actualJson = tokensToJson(actual);
+		if (expectedJson == actualJson) return true;
+
+		File("expected.json", "w").write(expectedJson);
+		File("actual.json", "w").write(actualJson);
+		wait(spawnShell("git diff --color-words --no-index -U10000 actual.json expected.json | tail -n +6"));
+		remove("expected.json");
+		remove("actual.json");
+		return false;
+	}
+
+	static bool test(dstring code, Lexer.Token[] expected) {
+		return testImpl(expected, Lexer(code).tokens);
+	}
+
+
+
+	test("import",
+		[
+			Lexer.Token(
+				"import",
+				Lexer.Coordinates(0, 0, 0),
+				Lexer.Coordinates(6, 0, 6),
+				[],
+				52
+			),
+			Lexer.Token(
+				"\x00",
+				Lexer.Coordinates(6, 0, 6),
+				Lexer.Coordinates(7, 0, 7),
+				[],
+				Lexer.Token.Type.END_OF_FILE
+			)
+		]
+	);
+
+//	immutable struct Coordinates {
+//		size_t position;
+//		size_t line;
+//		size_t column;
 //	}
-//}
+
+//	struct Comment {
+//		dstring code;
+//		Coordinates start;
+//		Coordinates end;
+//	}
+
+//	struct Token {
+//		dstring code;
+//		Coordinates start;
+//		Coordinates end;
+//		Comment[] comments;
+//		immutable uint id;
+//[
+//    {
+//        "comments": [],
+//        "end": {
+//            "line": 0,
+//            "position": 6,
+//            "column": 0
+//        },
+//        "id": 52,
+//        "code": "import",
+//        "start": {
+//            "line": 0,
+//            "position": 0,
+//            "column": 0
+//        }
+//    },
+//    {
+//        "comments": [],
+//        "end": {
+//            "line": 0,
+//            "position": 7,
+//            "column": 0
+//        },
+//        "id": 0,
+//        "code": "#(0)",
+//        "start": {
+//            "line": 0,
+//            "position": 6,
+//            "column": 0
+//        }
+//    }
+//]
 
 
+	//static void compareTokensByFields(fields...)(Lexer.Token expected, Lexer.Token actual, ref bool failed, ref string[] report) {
+	//	static string red(string s) { return "\033[33m" ~ s ~ "\033[0m"; }
+	//	static string green(string s) { return "\033[32m" ~ s ~ "\033[0m"; }
+
+	//	foreach (field; fields) {
+	//		auto expectedValue = __traits(getMember, expected, field);
+	//		auto actualValue = __traits(getMember, actual, field);
+	//		if (expectedValue == actualValue) {
+	//			report ~= green(to!string(expectedValue) ~ "  " ~ to!string(actualValue));
+	//		} else {
+	//			failed = true;
+	//			report ~= green(to!string(expectedValue)) ~ "  " ~ red(to!string(actualValue));
+	//		}
+	//	}
+	//}
+
+	//static void compareTokens(Lexer.Token expected, Lexer.Token actual, ref bool failed, ref string[] report) {
+	//	compareTokensByFields!("code", "start", "end", "comments", "id")(expected, actual, failed, report);
+	//}
+
+
+
+
+}
