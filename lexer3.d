@@ -170,7 +170,7 @@ struct Lexer {
 					case '.': return lexDecimalFloatThatStartsWithDot;
 					default: position--; break;
 				} // fallthrough is intentional
-			case '1': .. case '2':
+			case '1': .. case '9':
 				return lexDecimalNumberLiteral;
 
 			case '\x00':
