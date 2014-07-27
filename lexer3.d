@@ -90,36 +90,34 @@ struct Lexer {
 
 
 	private uint lexToken() {
-		if (isIdentifierFirstChar(code[position])) {
-			mixin(
-				new CodeGenerator()
-					.onStaticTokens!keywords(q{if (!isIdentifierChar(code[position])) return Token.idFor(`%s`);})
-					.on!`r"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`x"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`q"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!"q{"(q{skipTokenStringLiteral; return Token.Type.STRING_LITERAL;})
-					// TODO: delimited string literal
-					.generateCode(q{})
-			);
+		mixin(
+			new CodeGenerator()
+				.onStaticTokens!keywords(q{if (!isIdentifierChar(code[position])) return Token.idFor(`%s`);})
+				.onStaticTokens!operators(q{return Token.idFor(`%s`);})
+				// TODO: delimited string literal
+				.on!`r"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
+				.on!`x"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
+				.on!`q"`(q{skipToChar!('"'); position++; return Token.Type.STRING_LITERAL;})
+				.on!"q{"(q{skipTokenStringLiteral; return Token.Type.STRING_LITERAL;})
+				.on!"`" (q{skipToChar!('`'); position++; return Token.Type.STRING_LITERAL;})
+				.on!`"` (q{skipToCharWithEscapeSequences!'"'; position++; return Token.Type.STRING_LITERAL;})
+				.on!"'" (q{skipToCharWithEscapeSequences!'\''; position++; return Token.Type.CHARACTER_LITERAL;})
+				.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
+				.onOneOfChars!"123456789"(q{return lexDecimalNumberLiteral;})
+				.on!"."(
+					new CodeGenerator()
+						.onOneOfChars!"0123456789"(q{return lexDecimalFloatThatStartsWithDot;})
+						.generateCode(q{return Token.idFor(`.`);})
+				)
+				.onOneOfChars!"\x00\x1A"(q{return Token.Type.END_OF_FILE;})
+				.generateCode(q{})
+		);
+
+		if ((position == 0) || isIdentifierChar(code[position-1])) {
 			skipCharsWhile!"isIdentifierChar(code[position])";
 			return Token.Type.IDENTIFIER;
 		} else {
-			mixin(
-				new CodeGenerator()
-					.onStaticTokens!operators(q{return Token.idFor(`%s`);})
-					.on!"`" (q{skipToChar!('`'); position++; return Token.Type.STRING_LITERAL;})
-					.on!`"` (q{skipToCharWithEscapeSequences!('"'); position++; return Token.Type.STRING_LITERAL;})
-					.on!"'" (q{skipToCharWithEscapeSequences!('\''); position++; return Token.Type.CHARACTER_LITERAL;})
-					.on!"0" (q{return lexNumberLiteralThatStartsWithZero;})
-					.onOneOfChars!"123456789"(q{return lexDecimalNumberLiteral;})
-					.on!"."(
-						new CodeGenerator()
-							.onOneOfChars!"0123456789"(q{return lexDecimalFloatThatStartsWithDot;})
-							.generateCode(q{return Token.idFor(`.`);})
-					)
-					.onOneOfChars!"\x00\x1A"(q{return Token.Type.END_OF_FILE;})
-					.generateCode(q{assert(0);})  // FIXME
-			);
+			assert(0);
 		}
 	}
 
