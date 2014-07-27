@@ -110,7 +110,7 @@ struct Lexer {
 						.generateCode(q{return Token.idFor(`.`);})
 				)
 				.onOneOfChars!"\x00\x1A"(q{return Token.Type.END_OF_FILE;})
-				.generateCode(q{})
+				.generateCode
 		);
 
 		if ((position == 0) || isIdentifierChar(code[position-1])) {
@@ -244,16 +244,16 @@ struct Lexer {
 			return this;
 		}
 
-		string generateCode(string onNoMatch) const {
+		string generateCode() const {
 			auto result = "";
 			if (cases.length == 0) {
-				result = code.length > 0 ? code : onNoMatch;
+				result = code;
 			} else {
 				result = "switch(code[position++]){";
 				foreach (key, value; cases) {
-					result ~= key ~ value.generateCode(onNoMatch) ~ "break;";
+					result ~= key ~ value.generateCode() ~ "break;";
 				}
-				result ~= "default:position--;" ~ (code.length > 0 ? code : onNoMatch);
+				result ~= "default:position--;" ~ code;
 				result ~= "}";
 			}
 			return result;
