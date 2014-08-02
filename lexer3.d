@@ -28,9 +28,9 @@ struct Lexer {
 		immutable size_t startPosition;
 		immutable size_t endPosition;
 
-		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		//dstring code() immutable { return lexer.code[startPosition..endPosition]; }
+		//Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
+		//Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
 	}
 
 	struct Token {
@@ -40,13 +40,14 @@ struct Lexer {
 		private immutable uint commentBlockId;
 		immutable uint id;
 
-		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		const(Comment[]) comments() immutable { return lexer.commentBlocks[commentBlockId]; }
-		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		//dstring code() immutable { return lexer.code[startPosition..endPosition]; }
+		//const(Comment[]) comments() immutable { return lexer.commentBlocks[commentBlockId]; }
+		//Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
+		//Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
 
 		enum Type : ubyte {
 			END_OF_FILE,
+			UNEXPECTED_END_OF_FILE,
 			DYNAMIC_TOKEN,
 		}
 
@@ -93,7 +94,7 @@ struct Lexer {
 				if (cases.length == 0) {
 					result = code;
 				} else {
-					if (!topLevel) result = "switch(code[position++]){";
+					if (!topLevel) result = "switch(advance){";
 					foreach (key, value; cases) {
 						result ~= key ~ value.generateCode(false) ~ "break;";
 					}
@@ -109,7 +110,7 @@ struct Lexer {
 		auto startPosition = position;
 		uint id = Token.Type.DYNAMIC_TOKEN;
 
-		switch (code[position++]) {
+		switch (advance) {
 			mixin(new CodeGenerator()
 				.onStaticTokens!keywords(q{id = lexKeywordOrIdentifier(Token.idFor!(`%s`));})
 				.onStaticTokens!operators(q{id = Token.idFor!(`%s`);})
@@ -145,7 +146,7 @@ struct Lexer {
 			default: break;
 		}
 
-		if ((id == Token.Type.DYNAMIC_TOKEN) && ((position == 0) || isIdentifierChar(code[position-1]))) {
+		if ((id == Token.Type.DYNAMIC_TOKEN) && ((position == 0) || isIdentifierChar(previousChar))) {
 			skipCharsWhile!isIdentifierChar;
 		}
 
@@ -153,9 +154,11 @@ struct Lexer {
 		return Token(&this, startPosition, position, commentBlockId, id);
 	}
 
-	Coordinates coordinates(size_t position) const {
-		return Coordinates("", 0, 0); // TODO
-	}
+
+	private dchar currentChar() { return code[position]; }
+	private dchar advance() { return code[position++]; }
+	private dchar nextChar() { return code[position+1]; }
+	private dchar previousChar() { return code[position-1]; }
 
 
 	// For '#line NNN'
@@ -171,7 +174,7 @@ struct Lexer {
 
 
 	private uint lexKeywordOrIdentifier(uint keywordId) {
-		if (isIdentifierChar(code[position])) {
+		if (isIdentifierChar(currentChar)) {
 			skipCharsWhile!isIdentifierChar;
 			return Token.Type.DYNAMIC_TOKEN;
 		} else {
@@ -194,16 +197,16 @@ struct Lexer {
 	}
 
 	private void skipNumberLiteral() {
-		if (code[position-1] == '0') {
-			if ((code[position] == 'b') || (code[position] == 'B')) {
+		if (previousChar == '0') {
+			if ((currentChar == 'b') || (currentChar == 'B')) {
 				position++;
 				skipCharsWhile!isBinaryLiteralDigit;
 				skipCharsWhile!isAlpha;
 				return;
-			} else if ((code[position] == 'x') || (code[position] == 'X')) {
+			} else if ((currentChar == 'x') || (currentChar == 'X')) {
 				position++;
 				skipCharsWhile!isHexLiteralDigit;
-				if ((code[position] == '.') && (code[position+1] != '.')) {
+				if ((currentChar == '.') && (nextChar != '.')) {
 					position++;
 					skipCharsWhile!isHexLiteralDigit;
 				}
@@ -212,7 +215,7 @@ struct Lexer {
 			}
 		}
 		skipCharsWhile!isDecimalLiteralDigit;
-		if (code[position] == '.') {
+		if (currentChar == '.') {
 			position++;
 			skipCharsWhile!isDecimalLiteralDigit;
 		}
@@ -220,7 +223,7 @@ struct Lexer {
 	}
 
 	private uint lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot() {
-		if (isDigit(code[position])) {
+		if (isDigit(currentChar)) {
 			skipCharsWhile!isDigit;
 			skipCharsWhile!isAlpha;
 			return Token.Type.DYNAMIC_TOKEN;
@@ -240,7 +243,7 @@ struct Lexer {
 
 
 	private void skipCharsWhile(alias contition, string skipCode = "")() {
-		while ((position < code.length) && (contition(code[position]))) {   // TODO: newlines
+		while ((position < code.length) && (contition(currentChar))) {   // TODO: newlines
 			mixin(skipCode);
 			position++;
 		}
@@ -253,7 +256,7 @@ struct Lexer {
 	}
 
 	private void skipNextWithEscapeSequences(char terminator)() {
-		skipNext!(terminator, `if (code[position] == '\\') position++;`);
+		skipNext!(terminator, `if (currentChar == '\\') position++;`);
 	}
 
 	private static bool isIdentifierChar(dchar c) { return isAlphaNum(c) || (c == '_'); }
