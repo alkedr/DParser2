@@ -1,12 +1,12 @@
 module lexer2;
 
-import std.algorithm;
+import std.algorithm : countUntil;
 import std.string : format;
 import std.conv : to;
 import std.ascii;
 import std.stdio;
-import std.range;
-import std.array;
+import std.range : count;
+import std.array : empty, join;
 
 
 struct Lexer {
@@ -65,7 +65,7 @@ struct Lexer {
 	Token nextToken() {
 		auto commentBlockId = lexCommentsAndSkipWhitespaceAndLineBreaks();
 		auto startPosition = position;
-		auto id = lexToken();
+		auto id = lexToken;
 		return Token(&this, startPosition, position, commentBlockId, id);
 	}
 
@@ -457,19 +457,19 @@ unittest {
 
 	auto wysiwygStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
 		`r""`,
+		`r"r"`,
 		`r"string literal"`,
 		`r"string literal with ŪŅİĆŌĐĒ symbols"`,
 		`r"\"`,
 		`r"\\"`,
-		`r"r"`,
 	]);
 
 	auto alternateWysiwygStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
-		"``",
-		"`string literal`",
-		"`string literal with ŪŅİĆŌĐĒ symbols`",
-		"`\\`",
-		"`\\\\`",
+		r"``",
+		r"`string literal`",
+		r"`string literal with ŪŅİĆŌĐĒ symbols`",
+		r"`\`",
+		r"`\\`",
 	]);
 
 	auto doubleQuotedStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
@@ -490,7 +490,7 @@ unittest {
 
 	auto delimitedStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
 		// identifier delimiters
-		`q"EOS\nEOS"`,
+		"q\"EOS\nEOS\"",
 
 		// char delimiters
 		`q"//`,
@@ -522,6 +522,8 @@ unittest {
 		"0",
 		"1",
 		"12345678900987654321",
+		// TODO: _
+		// TODO: suffixes
 	]);
 
 	auto binaryIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
