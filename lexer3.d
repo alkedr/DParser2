@@ -47,11 +47,7 @@ struct Lexer {
 
 		enum Type : ubyte {
 			END_OF_FILE,
-			IDENTIFIER,         // none of the below
-			STRING_LITERAL,     // starts with " r" ` etc
-			CHARACTER_LITERAL,  // starts with '
-			INTEGER_LITERAL,    // starts with digit, no dot, no float suffix
-			FLOAT_LITERAL,      // starts with digit or dot, contains dot or float suffix
+			DYNAMIC_TOKEN,
 		}
 
 		static uint idFor(string staticToken) {
@@ -59,11 +55,15 @@ struct Lexer {
 			auto result = staticTokens.countUntil(staticToken) + Type.max + 1;
 			return cast(uint)result;
 		}
+
+		static uint idFor(string staticToken)() {
+			return idFor(staticToken);
+		}
 	}
 
 
 	Token nextToken() {
-		auto commentBlockId = lexCommentsAndSkipWhitespaceAndLineBreaks();
+		auto commentBlockId = skipCommentsAndSkipWhitespaceAndLineBreaks();
 		auto startPosition = position;
 		auto id = lexToken;
 		return Token(&this, startPosition, position, commentBlockId, id);
@@ -89,19 +89,6 @@ struct Lexer {
 
 	private uint lexToken() {
 
-		//string[string[]] rules = [
-		//	[`r"`, `x"`]: q{ lexStringLiteral!'"' },
-		//	[`q{`]: q{ lexTokenStringLiteral },
-		//	[`q"`]: q{ lexDelimitedStringLiteral },
-		//	["`"]: q{ lexStringLiteral!'`' },
-		//	[`"`]: q{ lexStringLiteralWithEscapeSequences!'"' },
-		//	[`'`]: q{ lexStringLiteralWithEscapeSequences!'\'' },
-		//	[`0`]: q{ lexNumberLiteralThatStartsWithZero },
-		//	[`1`, `2`, `3`, `4`, `5`, `6`, `7`, `8`, `9`]: q{ lexDecimalNumberLiteral },
-		//	[`.`]: q{ lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot },
-		//	[`\x00`, `\x1A`]: q{ Token.Type.END_OF_FILE },
-		//];
-
 		static class CodeGenerator {
 			private string code = "";
 			private CodeGenerator[string] cases;
@@ -121,10 +108,8 @@ struct Lexer {
 				return on(charSequence, code);
 			}
 
-			CodeGenerator onStaticTokens(alias staticTokens)(string codeFormatString) {
-				foreach (staticToken; staticTokens) {
-					on(staticToken, format(codeFormatString, staticToken));
-				}
+			CodeGenerator onStaticTokens(alias tokens)(string codeFmt) {
+				foreach (token; tokens) on(token, format(codeFmt, token));
 				return this;
 			}
 
@@ -137,7 +122,7 @@ struct Lexer {
 					foreach (key, value; cases) {
 						result ~= key ~ value.generateCode(false) ~ "break;";
 					}
-					if (!topLevel) result ~= "default:position--;" ~ code ~ "}";
+					if (!topLevel) result ~= "default:position--;" ~ code ~ "break;}";
 				}
 				return result;
 			}
@@ -145,30 +130,32 @@ struct Lexer {
 
 		switch (code[position++]) {
 			mixin(new CodeGenerator()
-				.onStaticTokens!keywords(q{if (!isIdentifierChar(code[position])) return Token.idFor(`%s`);})
-				.onStaticTokens!operators(q{return Token.idFor(`%s`);})
+				.onStaticTokens!keywords(q{return lexKeywordOrIdentifier(Token.idFor!(`%s`));})
+				.onStaticTokens!operators(q{return Token.idFor!(`%s`);})
 				//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
-				.on!`r"`(q{ skipNext!'"'; return Token.Type.STRING_LITERAL; })
-				.on!`x"`(q{ skipNext!'"'; return Token.Type.STRING_LITERAL; })
-				.on!`q"`(q{ return lexDelimitedStringLiteral; })
-				.on!"q{"(q{ return lexTokenStringLiteral; })
+				.on!`r"`(q{ skipNext!'"'; return Token.Type.DYNAMIC_TOKEN; })
+				.on!`x"`(q{ skipNext!'"'; return Token.Type.DYNAMIC_TOKEN; })
+				.on!`q"`(q{ skipDelimitedStringLiteral; return Token.Type.DYNAMIC_TOKEN; })
+				.on!"q{"(q{ skipTokenStringLiteral; return Token.Type.DYNAMIC_TOKEN; })
 				.on!"."(q{ return lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
 				.generateCode
 			);
 
 			case '`':
 				skipNext!'`';
-				return Token.Type.STRING_LITERAL;
+				return Token.Type.DYNAMIC_TOKEN;
 
 			case '"':
 				skipNextWithEscapeSequences!'"';
-				return Token.Type.STRING_LITERAL;
+				return Token.Type.DYNAMIC_TOKEN;
 
 			case '\'':
 				skipNextWithEscapeSequences!'\'';
-				return Token.Type.CHARACTER_LITERAL;
+				return Token.Type.DYNAMIC_TOKEN;
 
-			case '0': .. case '9': return lexNumberLiteral;
+			case '0': .. case '9':
+				skipNumberLiteral;
+				return Token.Type.DYNAMIC_TOKEN;
 
 			case '\x00':
 			case '\x1A':
@@ -178,84 +165,75 @@ struct Lexer {
 		}
 
 		if ((position == 0) || isIdentifierChar(code[position-1])) {
-			skipCharsWhile!"isIdentifierChar(code[position])";
-			return Token.Type.IDENTIFIER;
+			skipCharsWhile!isIdentifierChar;
+			return Token.Type.DYNAMIC_TOKEN;
 		} else {
+			writeln(code);
 			assert(0);
 		}
 	}
 
-	private uint lexDelimitedStringLiteral() {
-		// TODO
-		skipNext!'"';
-		return Token.Type.STRING_LITERAL;
+	private uint lexKeywordOrIdentifier(uint keywordId) {
+		if (isIdentifierChar(code[position])) {
+			skipCharsWhile!isIdentifierChar;
+			return Token.Type.DYNAMIC_TOKEN;
+		} else {
+			return keywordId;
+		}
 	}
 
-	private uint lexTokenStringLiteral() {
+	private void skipDelimitedStringLiteral() {
+		// TODO
+		skipNext!'"';
+	}
+
+	private void skipTokenStringLiteral() {
 		uint depth = 1;
 		while (depth > 0) {
 			auto token = nextToken;
 			if (token.id == Token.idFor("{")) depth++;
 			if (token.id == Token.idFor("}")) depth--;
 		}
-		return Token.Type.STRING_LITERAL;
 	}
 
-	private uint lexNumberLiteral() {
-		auto type = Token.Type.INTEGER_LITERAL;
-		switch (code[position++]) {
-			case 'b': case 'B':
-				skipCharsWhile!"(code[position] == '0') || (code[position] == '1')";
-				break;
-
-			case 'x': case 'X':
-				skipCharsWhile!"isHexDigit(code[position])";
-				if (code[position] == '.') {
+	private void skipNumberLiteral() {
+		if (code[position-1] == '0') {
+			if ((code[position] == 'b') || (code[position] == 'B')) {
+				position++;
+				skipCharsWhile!isBinaryLiteralDigit;
+				skipCharsWhile!isAlpha;
+				return;
+			} else if ((code[position] == 'x') || (code[position] == 'X')) {
+				position++;
+				skipCharsWhile!isHexLiteralDigit;
+				if ((code[position] == '.') && (code[position+1] != '.')) {
 					position++;
-					skipCharsWhile!"isHexDigit(code[position])";
-					type = Token.Type.FLOAT_LITERAL;
+					skipCharsWhile!isHexLiteralDigit;
 				}
-				break;
-
-			case '.':
-				skipCharsWhile!"isDigit(code[position])";
-				skipCharsWhile!"isAlpha(code[position])";
-				type =  Token.Type.FLOAT_LITERAL;
-				break;
-
-			default:
-				position--;
-
-				skipCharsWhile!"isDigit(code[position])";   // TODO: '_',  detect INT and FLOAT literals
-				if ((code[position] == '.') && (isDigit(code[position+1]))) {
-					position++;
-					skipCharsWhile!"isDigit(code[position])";
-					skipCharsWhile!"isAlpha(code[position])";
-					type = Token.Type.FLOAT_LITERAL;
-				} else {
-					skipCharsWhile!"isAlpha(code[position])";
-				}
-				break;
+				skipCharsWhile!isAlpha;
+				return;
+			}
 		}
-		skipCharsWhile!"isAlpha(code[position])";
-		return type;
+		skipCharsWhile!isDecimalLiteralDigit;
+		if (code[position] == '.') {
+			position++;
+			skipCharsWhile!isDecimalLiteralDigit;
+		}
+		skipCharsWhile!isAlpha;
 	}
-
-
-
 
 	private uint lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot() {
-		return isDigit(code[position]) ? lexDecimalFloatThatStartsWithDot : Token.idFor(`.`);
-	}
-
-	private uint lexDecimalFloatThatStartsWithDot() {
-		skipCharsWhile!"isDigit(code[position])";
-		skipCharsWhile!"isAlpha(code[position])";
-		return Token.Type.FLOAT_LITERAL;
+		if (isDigit(code[position])) {
+			skipCharsWhile!isDigit;
+			skipCharsWhile!isAlpha;
+			return Token.Type.DYNAMIC_TOKEN;
+		} else {
+			return Token.idFor(`.`);
+		}
 	}
 
 	// returns commentBlockId
-	private uint lexCommentsAndSkipWhitespaceAndLineBreaks() {
+	private uint skipCommentsAndSkipWhitespaceAndLineBreaks() {
 		//switch (code[position++]) {
 		//	case '/': lexComment;
 
@@ -264,15 +242,16 @@ struct Lexer {
 	}
 
 
-	private void skipCharsWhile(string contition, string skipCode = "")() {
-		while ((position < code.length) && (mixin(contition))) {   // TODO: newlines
+	private void skipCharsWhile(alias contition, string skipCode = "")() {
+		while ((position < code.length) && (contition(code[position]))) {   // TODO: newlines
 			mixin(skipCode);
 			position++;
 		}
 	}
 
 	private void skipNext(char terminator, string skipCode = "")() {
-		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator), skipCode);
+		static bool notChar(dchar expected)(dchar actual) { return actual != expected; }
+		skipCharsWhile!(notChar!terminator, skipCode);
 		position++;
 	}
 
@@ -280,17 +259,11 @@ struct Lexer {
 		skipNext!(terminator, `if (code[position] == '\\') position++;`);
 	}
 
-
-	private static bool isIdentifierChar(dchar c) {
-		return isAlphaNum(c) || (c == '_');
-	}
-
-	private static bool isIdentifierFirstChar(dchar c) {
-		return isAlpha(c) || (c == '_');
-	}
-
-
-
+	private static bool isIdentifierChar(dchar c) { return isAlphaNum(c) || (c == '_'); }
+	private static bool isIdentifierFirstChar(dchar c) { return isAlpha(c) || (c == '_'); }
+	private static bool isBinaryLiteralDigit(dchar c) { return (c == '0') || (c == '1') || (c == '_'); }
+	private static bool isDecimalLiteralDigit(dchar c) { return isDigit(c) || (c == '_'); }
+	private static bool isHexLiteralDigit(dchar c) { return isHexDigit(c) || (c == '_'); }
 
 
 	private enum keywords = [
@@ -411,7 +384,7 @@ unittest {
 		return result;
 	}
 
-	auto identifiers = casesOf!(Lexer.Token.Type.IDENTIFIER)([
+	auto identifiers = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		// basic rules
 		"simpleIdentifier",
 		"_01234567890qwertyuiopasdfghjklzxcvbnmQWERTYUIOPASDFGHJKLZXCVBNM",
@@ -437,7 +410,7 @@ unittest {
 		"Aabstract",
 	]);
 
-	auto wysiwygStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+	auto wysiwygStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		`r""`,
 		`r"r"`,
 		`r"string literal"`,
@@ -446,7 +419,7 @@ unittest {
 		`r"\\"`,
 	]);
 
-	auto alternateWysiwygStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+	auto alternateWysiwygStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		r"``",
 		r"`string literal`",
 		r"`string literal with ŪŅİĆŌĐĒ symbols`",
@@ -454,7 +427,7 @@ unittest {
 		r"`\\`",
 	]);
 
-	auto doubleQuotedStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+	auto doubleQuotedStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		`""`,
 		`"string literal"`,
 		`"string literal with ŪŅİĆŌĐĒ symbols"`,
@@ -464,13 +437,13 @@ unittest {
 		`"\"\""`,
 	]);
 
-	auto hexStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+	auto hexStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		`""`,
 		`"0123456789ABCDEF"`,
 		`"01 23	45 67 89 AB CD EF"`,
 	]);
 
-	auto delimitedStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+	auto delimitedStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		// identifier delimiters
 		"q\"EOS\nEOS\"",
 
@@ -485,7 +458,7 @@ unittest {
 	]);
 
 	// TODO: commented '{' and '}'
-	auto tokenStringLiterals = casesOf!(Lexer.Token.Type.STRING_LITERAL)([
+	auto tokenStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		`q{}`,
 		`q{"string literal"}`,
 		`q{"string literal with ŪŅİĆŌĐĒ symbols"}`,
@@ -494,13 +467,13 @@ unittest {
 		`q{{{}{}}}`,
 	]);
 
-	auto characterLiterals = casesOf!(Lexer.Token.Type.CHARACTER_LITERAL)([
+	auto characterLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		`'a'`,
 		`'\''`,
 		`'\U01234567'`,
 	]);
 
-	auto decimalIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
+	auto decimalIntegerLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		"0",
 		"1",
 		"12345678900987654321",
@@ -508,20 +481,20 @@ unittest {
 		// TODO: suffixes
 	]);
 
-	auto binaryIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
+	auto binaryIntegerLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		"0b0",
 		"0b1",
 		"0b101010101",
 		"0b000101010101",
 	]);
 
-	auto hexIntegerLiterals = casesOf!(Lexer.Token.Type.INTEGER_LITERAL)([
+	auto hexIntegerLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		"0x0",
 		"0x1",
 		"0x0123456789ABCDEFabcdef",
 	]);
 
-	auto decimalFloatLiterals = casesOf!(Lexer.Token.Type.FLOAT_LITERAL)([
+	auto decimalFloatLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		".0",
 		".1",
 		"0.0",
@@ -540,7 +513,7 @@ unittest {
 		//"12345678900987654321d",
 	]);
 
-	auto hexFloatLiterals = casesOf!(Lexer.Token.Type.FLOAT_LITERAL)([
+	auto hexFloatLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		"0x.0",
 		"0x.1",
 		"0x0.0",
@@ -551,7 +524,7 @@ unittest {
 		"0x0.1234567890abcdef",
 	]);
 
-	auto imaginaryFloatLiterals = casesOf!(Lexer.Token.Type.FLOAT_LITERAL)([
+	auto imaginaryFloatLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		"0i",
 		"1i",
 	]);
