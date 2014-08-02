@@ -47,11 +47,11 @@ struct Lexer {
 
 		enum Type : ubyte {
 			END_OF_FILE,
-			IDENTIFIER,
-			STRING_LITERAL,
-			CHARACTER_LITERAL,
-			INTEGER_LITERAL,
-			FLOAT_LITERAL,
+			IDENTIFIER,         // none of the below
+			STRING_LITERAL,     // starts with " r" ` etc
+			CHARACTER_LITERAL,  // starts with '
+			INTEGER_LITERAL,    // starts with digit, no dot, no float suffix
+			FLOAT_LITERAL,      // starts with digit or dot, contains dot or float suffix
 		}
 
 		static uint idFor(string staticToken) {
@@ -106,16 +106,13 @@ struct Lexer {
 			private string code = "";
 			private CodeGenerator[string] cases;
 
-			private CodeGenerator getCodeGeneratorForCase(string caseString) {
-				if (caseString !in cases) cases[caseString] = new CodeGenerator;
-				return cases[caseString];
-			}
-
 			CodeGenerator on(string charSequence, string code) {
 				if (charSequence.length == 0) {
 					this.code = code;
 				} else {
-					getCodeGeneratorForCase(format(`case'\x%02X':`, charSequence[0])).on(charSequence[1..$], code);
+					string caseString = format(`case'\x%02X':`, charSequence[0]);
+					if (caseString !in cases) cases[caseString] = new CodeGenerator;
+					cases[caseString].on(charSequence[1..$], code);
 				}
 				return this;
 			}
@@ -151,27 +148,27 @@ struct Lexer {
 				.onStaticTokens!keywords(q{if (!isIdentifierChar(code[position])) return Token.idFor(`%s`);})
 				.onStaticTokens!operators(q{return Token.idFor(`%s`);})
 				//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
-				.on!`r"`(q{ return lexStringLiteral!'"'; })
-				.on!`x"`(q{ return lexStringLiteral!'"'; })
+				.on!`r"`(q{ skipNext!'"'; return Token.Type.STRING_LITERAL; })
+				.on!`x"`(q{ skipNext!'"'; return Token.Type.STRING_LITERAL; })
 				.on!`q"`(q{ return lexDelimitedStringLiteral; })
 				.on!"q{"(q{ return lexTokenStringLiteral; })
 				.on!"."(q{ return lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
 				.generateCode
 			);
 
-			case '`': return lexStringLiteral!'`';
-			case '"': return lexStringLiteralWithEscapeSequences!'"';
-			case '\'': return lexCharacterLiteral;
+			case '`':
+				skipNext!'`';
+				return Token.Type.STRING_LITERAL;
 
-			case '0':
-				switch (code[position++]) {
-					case 'b': case 'B': return lexBinaryNumberLiteral;
-					case 'x': case 'X': return lexHexNumberLiteral;
-					case '.': return lexDecimalFloatThatStartsWithDot;
-					default: position--; break;
-				} // fallthrough is intentional
-			case '1': .. case '9':
-				return lexDecimalNumberLiteral;
+			case '"':
+				skipNextWithEscapeSequences!'"';
+				return Token.Type.STRING_LITERAL;
+
+			case '\'':
+				skipNextWithEscapeSequences!'\'';
+				return Token.Type.CHARACTER_LITERAL;
+
+			case '0': .. case '9': return lexNumberLiteral;
 
 			case '\x00':
 			case '\x1A':
@@ -188,29 +185,10 @@ struct Lexer {
 		}
 	}
 
-	private uint lexStringLiteral(char terminator)() {
-		skipToChar!terminator;
-		position++;
-		return Token.Type.STRING_LITERAL;
-	}
-
 	private uint lexDelimitedStringLiteral() {
 		// TODO
-		skipToChar!('"');
-		position++;
+		skipNext!'"';
 		return Token.Type.STRING_LITERAL;
-	}
-
-	private uint lexStringLiteralWithEscapeSequences(char terminator)() {
-		skipToCharWithEscapeSequences!(terminator);
-		position++;
-		return Token.Type.STRING_LITERAL;
-	}
-
-	private uint lexCharacterLiteral() {
-		skipToCharWithEscapeSequences!('\'');
-		position++;
-		return Token.Type.CHARACTER_LITERAL;
 	}
 
 	private uint lexTokenStringLiteral() {
@@ -223,37 +201,51 @@ struct Lexer {
 		return Token.Type.STRING_LITERAL;
 	}
 
+	private uint lexNumberLiteral() {
+		auto type = Token.Type.INTEGER_LITERAL;
+		switch (code[position++]) {
+			case 'b': case 'B':
+				skipCharsWhile!"(code[position] == '0') || (code[position] == '1')";
+				break;
+
+			case 'x': case 'X':
+				skipCharsWhile!"isHexDigit(code[position])";
+				if (code[position] == '.') {
+					position++;
+					skipCharsWhile!"isHexDigit(code[position])";
+					type = Token.Type.FLOAT_LITERAL;
+				}
+				break;
+
+			case '.':
+				skipCharsWhile!"isDigit(code[position])";
+				skipCharsWhile!"isAlpha(code[position])";
+				type =  Token.Type.FLOAT_LITERAL;
+				break;
+
+			default:
+				position--;
+
+				skipCharsWhile!"isDigit(code[position])";   // TODO: '_',  detect INT and FLOAT literals
+				if ((code[position] == '.') && (isDigit(code[position+1]))) {
+					position++;
+					skipCharsWhile!"isDigit(code[position])";
+					skipCharsWhile!"isAlpha(code[position])";
+					type = Token.Type.FLOAT_LITERAL;
+				} else {
+					skipCharsWhile!"isAlpha(code[position])";
+				}
+				break;
+		}
+		skipCharsWhile!"isAlpha(code[position])";
+		return type;
+	}
+
+
+
+
 	private uint lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot() {
 		return isDigit(code[position]) ? lexDecimalFloatThatStartsWithDot : Token.idFor(`.`);
-	}
-
-	private uint lexDecimalNumberLiteral() {
-		skipCharsWhile!"isDigit(code[position])";   // TODO: '_',  detect INT and FLOAT literals
-		if ((code[position] == '.') && (isDigit(code[position+1]))) {
-			position++;
-			skipCharsWhile!"isDigit(code[position])";
-			skipCharsWhile!"isAlpha(code[position])";
-			return Token.Type.FLOAT_LITERAL;
-		} else {
-			skipCharsWhile!"isAlpha(code[position])";
-			return Token.Type.INTEGER_LITERAL;
-		}
-	}
-
-	private uint lexBinaryNumberLiteral() {
-		skipCharsWhile!"(code[position] == '0') || (code[position] == '1')";
-		return Token.Type.INTEGER_LITERAL;
-	}
-
-	private uint lexHexNumberLiteral() {
-		skipCharsWhile!"isHexDigit(code[position])";
-		if (code[position] == '.') {
-			position++;
-			skipCharsWhile!"isHexDigit(code[position])";
-			return Token.Type.FLOAT_LITERAL;
-		} else {
-			return Token.Type.INTEGER_LITERAL;
-		}
 	}
 
 	private uint lexDecimalFloatThatStartsWithDot() {
@@ -261,17 +253,6 @@ struct Lexer {
 		skipCharsWhile!"isAlpha(code[position])";
 		return Token.Type.FLOAT_LITERAL;
 	}
-
-	private uint lexNumberLiteralThatStartsWithZero() {
-		switch (code[position++]) {
-			case 'b': case 'B': return lexBinaryNumberLiteral;
-			case 'x': case 'X': return lexHexNumberLiteral;
-			case '.': return lexDecimalFloatThatStartsWithDot;
-			default: position--; break;
-		}
-		return Token.Type.INTEGER_LITERAL;
-	}
-
 
 	// returns commentBlockId
 	private uint lexCommentsAndSkipWhitespaceAndLineBreaks() {
@@ -290,12 +271,13 @@ struct Lexer {
 		}
 	}
 
-	private void skipToChar(char terminator, string skipCode = "")() {
+	private void skipNext(char terminator, string skipCode = "")() {
 		skipCharsWhile!(format(`code[position] != '\x%2x'`, terminator), skipCode);
+		position++;
 	}
 
-	private void skipToCharWithEscapeSequences(char terminator)() {
-		skipToChar!(terminator, `if (code[position] == '\\') position++;`);
+	private void skipNextWithEscapeSequences(char terminator)() {
+		skipNext!(terminator, `if (code[position] == '\\') position++;`);
 	}
 
 
