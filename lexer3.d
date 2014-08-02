@@ -11,39 +11,34 @@ import std.array : empty, join;
 
 struct Lexer {
 	dstring code;
-	size_t position;
+	Coordinates position;
 
 	this(dstring code) {
 		this.code = code ~ 0;
 	}
 
-	immutable struct Coordinates {
+	struct Coordinates {
 		string fileName;
-		immutable size_t line;
-		immutable size_t column;
+		size_t index;
+		size_t line;
+		size_t column;
+	}
+
+	struct Range {
+		Coordinates start;
+		Coordinates end;
 	}
 
 	struct Comment {
-		private const(Lexer*) lexer;
-		immutable size_t startPosition;
-		immutable size_t endPosition;
-
-		//dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		//Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		//Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		Range range;
+		dstring code;
 	}
 
 	struct Token {
-		private const(Lexer*) lexer;
-		immutable size_t startPosition;
-		immutable size_t endPosition;
-		private immutable uint commentBlockId;
-		immutable uint id;
-
-		//dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		//const(Comment[]) comments() immutable { return lexer.commentBlocks[commentBlockId]; }
-		//Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		//Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		Range range;
+		Comment[] comments;
+		dstring code;
+		uint id;
 
 		enum Type : ubyte {
 			END_OF_FILE,
@@ -98,28 +93,26 @@ struct Lexer {
 					foreach (key, value; cases) {
 						result ~= key ~ value.generateCode(false) ~ "break;";
 					}
-					if (!topLevel) result ~= "default:position--;" ~ code ~ "break;}";
+					if (!topLevel) result ~= "default:position.index--;position.column--;" ~ code ~ "break;}";
 				}
 				return result;
 			}
 		}
 
-
-
-		auto commentBlockId = skipCommentsAndSkipWhitespaceAndLineBreaks();
-		auto startPosition = position;
-		uint id = Token.Type.DYNAMIC_TOKEN;
+		Token result;
+		result.range.start = position;
+		result.id = Token.Type.DYNAMIC_TOKEN;
 
 		switch (advance) {
 			mixin(new CodeGenerator()
-				.onStaticTokens!keywords(q{id = lexKeywordOrIdentifier(Token.idFor!(`%s`));})
-				.onStaticTokens!operators(q{id = Token.idFor!(`%s`);})
+				.onStaticTokens!keywords(q{result.id = lexKeywordOrIdentifier(Token.idFor!(`%s`));})
+				.onStaticTokens!operators(q{result.id = Token.idFor!(`%s`);})
 				//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
 				.on!`r"`(q{ skipNext!'"'; })
 				.on!`x"`(q{ skipNext!'"'; })
 				.on!`q"`(q{ skipDelimitedStringLiteral; })
 				.on!"q{"(q{ skipTokenStringLiteral; })
-				.on!"."(q{ id = lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
+				.on!"."(q{ result.id = lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
 				.generateCode
 			);
 
@@ -141,24 +134,25 @@ struct Lexer {
 
 			case '\x00':
 			case '\x1A':
-				id = Token.Type.END_OF_FILE;
+				result.id = Token.Type.END_OF_FILE;
 
 			default: break;
 		}
 
-		if ((id == Token.Type.DYNAMIC_TOKEN) && ((position == 0) || isIdentifierChar(previousChar))) {
+		if ((result.id == Token.Type.DYNAMIC_TOKEN) && ((position.index == 0) || isIdentifierChar(previousChar))) {
 			skipCharsWhile!isIdentifierChar;
 		}
 
+		result.range.end = position;
 
-		return Token(&this, startPosition, position, commentBlockId, id);
+		return result;
 	}
 
 
-	private dchar currentChar() { return code[position]; }
-	private dchar advance() { return code[position++]; }
-	private dchar nextChar() { return code[position+1]; }
-	private dchar previousChar() { return code[position-1]; }
+	private dchar currentChar() { return code[position.index]; }
+	private dchar advance() { position.column++; return code[position.index++]; }
+	private dchar nextChar() { return code[position.index+1]; }
+	private dchar previousChar() { return code[position.index-1]; }
 
 
 	// For '#line NNN'
@@ -199,15 +193,15 @@ struct Lexer {
 	private void skipNumberLiteral() {
 		if (previousChar == '0') {
 			if ((currentChar == 'b') || (currentChar == 'B')) {
-				position++;
+				advance;
 				skipCharsWhile!isBinaryLiteralDigit;
 				skipCharsWhile!isAlpha;
 				return;
 			} else if ((currentChar == 'x') || (currentChar == 'X')) {
-				position++;
+				advance;
 				skipCharsWhile!isHexLiteralDigit;
 				if ((currentChar == '.') && (nextChar != '.')) {
-					position++;
+					advance;
 					skipCharsWhile!isHexLiteralDigit;
 				}
 				skipCharsWhile!isAlpha;
@@ -216,7 +210,7 @@ struct Lexer {
 		}
 		skipCharsWhile!isDecimalLiteralDigit;
 		if (currentChar == '.') {
-			position++;
+			advance;
 			skipCharsWhile!isDecimalLiteralDigit;
 		}
 		skipCharsWhile!isAlpha;
@@ -243,20 +237,20 @@ struct Lexer {
 
 
 	private void skipCharsWhile(alias contition, string skipCode = "")() {
-		while ((position < code.length) && (contition(currentChar))) {   // TODO: newlines
+		while ((position.index < code.length) && (contition(currentChar))) {   // TODO: newlines
 			mixin(skipCode);
-			position++;
+			advance;
 		}
 	}
 
 	private void skipNext(char terminator, string skipCode = "")() {
 		static bool notChar(dchar expected)(dchar actual) { return actual != expected; }
 		skipCharsWhile!(notChar!terminator, skipCode);
-		position++;
+		advance;
 	}
 
 	private void skipNextWithEscapeSequences(char terminator)() {
-		skipNext!(terminator, `if (currentChar == '\\') position++;`);
+		skipNext!(terminator, `if (currentChar == '\\') advance;`);
 	}
 
 	private static bool isIdentifierChar(dchar c) { return isAlphaNum(c) || (c == '_'); }
@@ -329,7 +323,12 @@ unittest {
 		bool failed = false;
 
 		static string structTokenToString(Lexer.Token token) {
-			return format("%d(%d..%d, %d)", token.id, token.startPosition, token.endPosition, token.commentBlockId);
+			return format("%d(%d %d:%d - %d %d:%d)",
+				token.id,
+				token.range.start.index, token.range.start.line, token.range.start.column,
+				token.range.end.index, token.range.end.line, token.range.end.column
+				// TODO: comments and code
+				);
 		}
 
 		void assertEquals(Lexer.Token actual, Lexer.Token expected) {
@@ -345,8 +344,8 @@ unittest {
 		}
 
 		auto lexer = Lexer(code);
-		assertEquals(lexer.nextToken, Lexer.Token(null, 0, code.length, 0, id));
-		assertEquals(lexer.nextToken, Lexer.Token(null, code.length, code.length+1, 0, Lexer.Token.Type.END_OF_FILE));
+		assertEquals(lexer.nextToken, Lexer.Token(Lexer.Range(Lexer.Coordinates("", 0, 0, 0), Lexer.Coordinates("", code.length, 0, code.length)), [], code, id));
+		assertEquals(lexer.nextToken, Lexer.Token(Lexer.Range(Lexer.Coordinates("", code.length, 0, code.length), Lexer.Coordinates("", code.length+1, 0, code.length+1)), [], "\0", Lexer.Token.Type.END_OF_FILE));
 
 		return failed ? report ~ "\n" : "";
 	}
