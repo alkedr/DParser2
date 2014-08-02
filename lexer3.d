@@ -214,15 +214,6 @@ struct Lexer {
 		}
 	}
 
-	// returns commentBlockId
-	private uint skipCommentsAndSkipWhitespaceAndLineBreaks() {
-		//switch (code[position++]) {
-		//	case '/': lexComment;
-
-		//}
-		return 0;  // TODO
-	}
-
 
 	private void skipCharsWhile(alias contition, string skipCode = "")() {
 		while ((position.index < code.length) && (contition(currentChar))) {   // TODO: newlines
@@ -291,6 +282,8 @@ struct Lexer {
 
 
 unittest {
+	writeln("Lexer.Coordinates.sizeof: ", Lexer.Coordinates.sizeof);
+	writeln("Lexer.Range.sizeof: ", Lexer.Range.sizeof);
 	writeln("Lexer.Comment.sizeof: ", Lexer.Comment.sizeof);
 	writeln("Lexer.Token.sizeof: ", Lexer.Token.sizeof);
 }
