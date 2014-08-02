@@ -155,18 +155,6 @@ struct Lexer {
 	private dchar previousChar() { return code[position.index-1]; }
 
 
-	// For '#line NNN'
-	private struct LineNumerationChange {
-		size_t startFromLine;
-		size_t newLineNumber;
-		string fileName;
-	}
-
-	private Comment[][] commentBlocks = [[]];
-	private size_t[] lineStarts = [0];
-	private LineNumerationChange[] lineNumerationChanges = [{0, 0}];
-
-
 	private uint lexKeywordOrIdentifier(uint keywordId) {
 		if (isIdentifierChar(currentChar)) {
 			skipCharsWhile!isIdentifierChar;
