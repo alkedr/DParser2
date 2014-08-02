@@ -63,31 +63,6 @@ struct Lexer {
 
 
 	Token nextToken() {
-		auto commentBlockId = skipCommentsAndSkipWhitespaceAndLineBreaks();
-		auto startPosition = position;
-		auto id = lexToken;
-		return Token(&this, startPosition, position, commentBlockId, id);
-	}
-
-	Coordinates coordinates(size_t position) const {
-		return Coordinates("", 0, 0); // TODO
-	}
-
-
-	// For '#line NNN'
-	private struct LineNumerationChange {
-		size_t startFromLine;
-		size_t newLineNumber;
-		string fileName;
-	}
-
-	private Comment[][] commentBlocks = [[]];
-	private size_t[] lineStarts = [0];
-	private LineNumerationChange[] lineNumerationChanges = [{0, 0}];
-
-
-
-	private uint lexToken() {
 
 		static class CodeGenerator {
 			private string code = "";
@@ -128,50 +103,72 @@ struct Lexer {
 			}
 		}
 
+
+
+		auto commentBlockId = skipCommentsAndSkipWhitespaceAndLineBreaks();
+		auto startPosition = position;
+		uint id = Token.Type.DYNAMIC_TOKEN;
+
 		switch (code[position++]) {
 			mixin(new CodeGenerator()
-				.onStaticTokens!keywords(q{return lexKeywordOrIdentifier(Token.idFor!(`%s`));})
-				.onStaticTokens!operators(q{return Token.idFor!(`%s`);})
+				.onStaticTokens!keywords(q{id = lexKeywordOrIdentifier(Token.idFor!(`%s`));})
+				.onStaticTokens!operators(q{id = Token.idFor!(`%s`);})
 				//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
-				.on!`r"`(q{ skipNext!'"'; return Token.Type.DYNAMIC_TOKEN; })
-				.on!`x"`(q{ skipNext!'"'; return Token.Type.DYNAMIC_TOKEN; })
-				.on!`q"`(q{ skipDelimitedStringLiteral; return Token.Type.DYNAMIC_TOKEN; })
-				.on!"q{"(q{ skipTokenStringLiteral; return Token.Type.DYNAMIC_TOKEN; })
-				.on!"."(q{ return lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
+				.on!`r"`(q{ skipNext!'"'; })
+				.on!`x"`(q{ skipNext!'"'; })
+				.on!`q"`(q{ skipDelimitedStringLiteral; })
+				.on!"q{"(q{ skipTokenStringLiteral; })
+				.on!"."(q{ id = lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
 				.generateCode
 			);
 
 			case '`':
 				skipNext!'`';
-				return Token.Type.DYNAMIC_TOKEN;
+				break;
 
 			case '"':
 				skipNextWithEscapeSequences!'"';
-				return Token.Type.DYNAMIC_TOKEN;
+				break;
 
 			case '\'':
 				skipNextWithEscapeSequences!'\'';
-				return Token.Type.DYNAMIC_TOKEN;
+				break;
 
 			case '0': .. case '9':
 				skipNumberLiteral;
-				return Token.Type.DYNAMIC_TOKEN;
+				break;
 
 			case '\x00':
 			case '\x1A':
-				return Token.Type.END_OF_FILE;
+				id = Token.Type.END_OF_FILE;
 
 			default: break;
 		}
 
-		if ((position == 0) || isIdentifierChar(code[position-1])) {
+		if ((id == Token.Type.DYNAMIC_TOKEN) && ((position == 0) || isIdentifierChar(code[position-1]))) {
 			skipCharsWhile!isIdentifierChar;
-			return Token.Type.DYNAMIC_TOKEN;
-		} else {
-			writeln(code);
-			assert(0);
 		}
+
+
+		return Token(&this, startPosition, position, commentBlockId, id);
 	}
+
+	Coordinates coordinates(size_t position) const {
+		return Coordinates("", 0, 0); // TODO
+	}
+
+
+	// For '#line NNN'
+	private struct LineNumerationChange {
+		size_t startFromLine;
+		size_t newLineNumber;
+		string fileName;
+	}
+
+	private Comment[][] commentBlocks = [[]];
+	private size_t[] lineStarts = [0];
+	private LineNumerationChange[] lineNumerationChanges = [{0, 0}];
+
 
 	private uint lexKeywordOrIdentifier(uint keywordId) {
 		if (isIdentifierChar(code[position])) {
