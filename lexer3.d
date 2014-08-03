@@ -162,6 +162,26 @@ struct Lexer {
 	private dchar previousChar() { return code[position.index-1]; }
 
 	private void skipWhitespaceAndLineBreaks() {
+		do {
+			switch (advance) {
+				case '\u000D':
+					if (currentChar == '\u000A') advance;
+				case '\u000A':
+				case '\u2028':
+				case '\u2029':
+					position.line++;
+					position.column = 0;
+				case '\u0020':
+				case '\u0009':
+				case '\u000B':
+				case '\u000C':
+					continue;
+				default:
+					position.index--;
+					position.column--;
+					break;
+			}
+		} while (0);
 	}
 
 	private Comment lexBlockComment() {
