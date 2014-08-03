@@ -5,10 +5,11 @@ import std.string : format;
 import std.conv : to;
 import std.ascii;
 import std.stdio;
-import std.range : count;
+import std.range;
 import std.array : empty, join;
 
-
+// TODO: compile-time switches for comments?
+// TODO: store line and column in array in Lexer because Tokens will be part of AST classes?
 struct Lexer {
 	dstring code;
 	Coordinates position;
@@ -103,41 +104,47 @@ struct Lexer {
 		result.range.start = position;
 		result.id = Token.Type.DYNAMIC_TOKEN;
 
-		switch (advance) {
-			mixin(new CodeGenerator()
-				.onStaticTokens!keywords(q{result.id = lexKeywordOrIdentifier(Token.idFor!(`%s`));})
-				.onStaticTokens!operators(q{result.id = Token.idFor!(`%s`);})
-				//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
-				.on!`r"`(q{ skipNext!'"'; })
-				.on!`x"`(q{ skipNext!'"'; })
-				.on!`q"`(q{ skipDelimitedStringLiteral; })
-				.on!"q{"(q{ skipTokenStringLiteral; })
-				.on!"."(q{ result.id = lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
-				.generateCode
-			);
+		do {
+			skipWhitespaceAndLineBreaks;
+			switch (advance) {
+				mixin(new CodeGenerator()
+					.onStaticTokens!keywords(q{result.id = lexKeywordOrIdentifier(Token.idFor!(`%s`));})
+					.onStaticTokens!operators(q{result.id = Token.idFor!(`%s`);})
+					//.on!`__EOF__`(q{ return Token.Type.END_OF_FILE; })
+					.on!`r"`(q{ skipNext!'"'; })
+					.on!`x"`(q{ skipNext!'"'; })
+					.on!`q"`(q{ skipDelimitedStringLiteral; })
+					.on!"q{"(q{ skipTokenStringLiteral; })
+					.on!"."(q{ result.id = lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot; })
+					.on!"/*"(q{ result.comments ~= lexBlockComment; continue; })
+					.on!"//"(q{ result.comments ~= lexLineComment; continue; })
+					.on!"/+"(q{ result.comments ~= lexNestingBlockComment; continue; })
+					.generateCode
+				);
 
-			case '`':
-				skipNext!'`';
-				break;
+				case '`':
+					skipNext!'`';
+					break;
 
-			case '"':
-				skipNextWithEscapeSequences!'"';
-				break;
+				case '"':
+					skipNextWithEscapeSequences!'"';
+					break;
 
-			case '\'':
-				skipNextWithEscapeSequences!'\'';
-				break;
+				case '\'':
+					skipNextWithEscapeSequences!'\'';
+					break;
 
-			case '0': .. case '9':
-				skipNumberLiteral;
-				break;
+				case '0': .. case '9':
+					skipNumberLiteral;
+					break;
 
-			case '\x00':
-			case '\x1A':
-				result.id = Token.Type.END_OF_FILE;
+				case '\x00':
+				case '\x1A':
+					result.id = Token.Type.END_OF_FILE;
 
-			default: break;
-		}
+				default: break;
+			}
+		} while (0);
 
 		if ((result.id == Token.Type.DYNAMIC_TOKEN) && ((position.index == 0) || isIdentifierChar(previousChar))) {
 			skipCharsWhile!isIdentifierChar;
@@ -154,6 +161,20 @@ struct Lexer {
 	private dchar nextChar() { return code[position.index+1]; }
 	private dchar previousChar() { return code[position.index-1]; }
 
+	private void skipWhitespaceAndLineBreaks() {
+	}
+
+	private Comment lexBlockComment() {
+		return Comment();
+	}
+
+	private Comment lexLineComment() {
+		return Comment();
+	}
+
+	private Comment lexNestingBlockComment() {
+		return Comment();
+	}
 
 	private uint lexKeywordOrIdentifier(uint keywordId) {
 		if (isIdentifierChar(currentChar)) {
@@ -371,6 +392,8 @@ unittest {
 		"Aa1",
 		"_1",
 		"_",
+		"y",
+		"z",
 
 		// distinction from string literals ( r" x" q" q{ )
 		"r",
@@ -423,6 +446,7 @@ unittest {
 		`"01 23	45 67 89 AB CD EF"`,
 	]);
 
+	// TODO
 	auto delimitedStringLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		// identifier delimiters
 		"q\"EOS\nEOS\"",
@@ -457,8 +481,9 @@ unittest {
 		"0",
 		"1",
 		"12345678900987654321",
-		// TODO: _
-		// TODO: suffixes
+		"1_2_3_4_5_6_7_8_9_0_0_9_8_7_6_5_4_3_2__1__",
+		"1u",
+		"1uL",
 	]);
 
 	auto binaryIntegerLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
@@ -466,12 +491,18 @@ unittest {
 		"0b1",
 		"0b101010101",
 		"0b000101010101",
+		"0b1___010__1_0101",
+		"0b1u",
+		"0b1uL",
 	]);
 
 	auto hexIntegerLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
 		"0x0",
 		"0x1",
 		"0x0123456789ABCDEFabcdef",
+		"0x01__23cd__ef",
+		"0x1u",
+		"0x1uL",
 	]);
 
 	auto decimalFloatLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
@@ -484,13 +515,13 @@ unittest {
 		"1234567890.0",
 		"0.1234567890",
 
-		//"0f",
-		//"1f",
-		//"12345678900987654321f",
+		"0f",
+		"1f",
+		"12345678900987654321f",
 
-		//"0d",
-		//"1d",
-		//"12345678900987654321d",
+		"0d",
+		"1d",
+		"12345678900987654321d",
 	]);
 
 	auto hexFloatLiterals = casesOf!(Lexer.Token.Type.DYNAMIC_TOKEN)([
@@ -511,10 +542,7 @@ unittest {
 
 
 // TODO: check unexpected end of file error
-// TODO: CHECK ERRORS!
 // TODO: check line breaks inside literals
-// TODO: check suffixes (string, char, int, float, imaginary)
-// TODO: _ в числах
 // TODO: test  "1..2" - 3 tokens
 
 
@@ -531,6 +559,79 @@ unittest {
 	test("Literals / Integer / Hexadecimal     ", hexIntegerLiterals);
 	test("Literals / Float / Decimal           ", decimalFloatLiterals);
 	test("Literals / Float / Hexadecimal       ", hexFloatLiterals);
-//test("Literals / Float / Imaginary         ", imaginaryFloatLiterals);
+	test("Literals / Float / Imaginary         ", imaginaryFloatLiterals);
 	test("Keywords and operators               ", staticTokens);
+}
+
+
+
+
+
+unittest {
+	static string[] sequence(string[][] items...) {
+		if (items.length == 1) {
+			return items[0];
+		} else {
+			string[] result;
+			foreach (s1; items[0]) {
+				foreach (s2; sequence(items[1..$])) {
+					result ~= (s1 ~ s2);
+				}
+			}
+			return result;
+		}
+	}
+
+
+	// char classes
+	auto whitespace = ["\u0020", "\u0009", "\u000B", "\u000C"];
+	auto lineBreak = ["\u000D", "\u000A", "\u000D\u000A", "\u2028", "\u2029"];
+
+	auto underscore = ["_"];
+
+	auto binaryDigit = ["0", "1"];
+	auto decimalDigit = binaryDigit ~ ["2", "3", "4", "5", "6", "7", "8", "9"];
+	auto hexDigit = decimalDigit ~ ["a", "A", "b", "B", "c", "C", "d", "D", "e", "E", "f", "F"];
+
+	auto binaryLiteralDigit = binaryDigit ~ underscore;
+	auto decimalLiteralDigit = decimalDigit ~ underscore;
+	auto hexLiteralDigit = hexDigit ~ underscore;
+
+	auto smallLetter = iota(0, 26).map!(i => to!string([cast(char)('a' + i)])).array;
+	auto bigLetter = iota(0, 26).map!(i => to!string([cast(char)('A' + i)])).array;
+	auto letter = smallLetter ~ bigLetter;
+
+	auto firstIdentifierChar = letter ~ underscore;
+	auto identifierChar = letter ~ underscore ~ decimalDigit;
+
+	// char sequences
+	auto empty = [""];
+
+	auto whitespaces = empty ~ whitespace ~ sequence(whitespace, whitespace);
+
+	auto twoLineBreaks = sequence(lineBreak, whitespace, lineBreak);
+	auto threeLineBreaks = sequence(twoLineBreaks, whitespace, lineBreak);
+
+	auto identifier =
+		firstIdentifierChar ~
+		sequence(firstIdentifierChar, underscore ~ decimalDigit) ~
+		sequence(empty ~ firstIdentifierChar, ["abstract"], identifierChar) ~
+		sequence(firstIdentifierChar, ["abstract"])
+		;
+
+	//writeln(identifier);
+	//writeln(identifier.length);
+
+
+
+	//auto anythingButDoubleQuoteAndLineBreak = [
+	//	``,
+	//	`ŪŅİĆŌĐĒ symbols`,
+	//];
+
+	//auto wysiwygStringLiterals = [[`r"`], anythingButDoubleQuoteAndLineBreak, [`"`]];
+
+
+	//test("Literals / String / Wysiwyg          ", wysiwygStringLiterals);
+
 }
