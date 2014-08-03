@@ -37,11 +37,10 @@ struct Lexer {
 		private const(Lexer*) lexer;
 		immutable size_t startPosition;
 		immutable size_t endPosition;
-		private immutable uint commentBlockId;
 		immutable uint id;
+		Comment[] comments;
 
 		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		const(Comment[]) comments() immutable { return lexer.commentBlocks[commentBlockId]; }
 		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
 		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
 
@@ -105,7 +104,7 @@ struct Lexer {
 
 
 
-		auto commentBlockId = skipCommentsAndSkipWhitespaceAndLineBreaks();
+		auto comments = skipCommentsAndSkipWhitespaceAndLineBreaks();
 		auto startPosition = position;
 		uint id = Token.Type.DYNAMIC_TOKEN;
 
@@ -150,7 +149,7 @@ struct Lexer {
 		}
 
 
-		return Token(&this, startPosition, position, commentBlockId, id);
+		return Token(&this, startPosition, position, id, comments);
 	}
 
 	Coordinates coordinates(size_t position) const {
@@ -165,7 +164,6 @@ struct Lexer {
 		string fileName;
 	}
 
-	private Comment[][] commentBlocks = [[]];
 	private size_t[] lineStarts = [0];
 	private LineNumerationChange[] lineNumerationChanges = [{0, 0}];
 
@@ -229,13 +227,12 @@ struct Lexer {
 		}
 	}
 
-	// returns commentBlockId
-	private uint skipCommentsAndSkipWhitespaceAndLineBreaks() {
+	private Comment[] skipCommentsAndSkipWhitespaceAndLineBreaks() {
 		//switch (code[position++]) {
 		//	case '/': lexComment;
 
 		//}
-		return 0;  // TODO
+		return [];  // TODO
 	}
 
 
@@ -326,7 +323,7 @@ unittest {
 		bool failed = false;
 
 		static string structTokenToString(Lexer.Token token) {
-			return format("%d(%d..%d, %d)", token.id, token.startPosition, token.endPosition, token.commentBlockId);
+			return format("%d(%d..%d)", token.id, token.startPosition, token.endPosition);
 		}
 
 		void assertEquals(Lexer.Token actual, Lexer.Token expected) {
@@ -342,8 +339,8 @@ unittest {
 		}
 
 		auto lexer = Lexer(code);
-		assertEquals(lexer.nextToken, Lexer.Token(null, 0, code.length, 0, id));
-		assertEquals(lexer.nextToken, Lexer.Token(null, code.length, code.length+1, 0, Lexer.Token.Type.END_OF_FILE));
+		assertEquals(lexer.nextToken, Lexer.Token(null, 0, code.length, id, []));
+		assertEquals(lexer.nextToken, Lexer.Token(null, code.length, code.length+1, Lexer.Token.Type.END_OF_FILE, []));
 
 		return failed ? report ~ "\n" : "";
 	}
