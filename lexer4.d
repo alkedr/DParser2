@@ -29,21 +29,21 @@ struct Lexer {
 		immutable size_t startPosition;
 		immutable size_t endPosition;
 
-		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		dstring code() const { return lexer.code[startPosition..endPosition]; }
+		Coordinates startCoordinates() const { return lexer.coordinates(startPosition); }
+		Coordinates endCoordinates() const { return lexer.coordinates(endPosition); }
 	}
 
 	struct Token {
-		private const(Lexer*) lexer;
-		immutable size_t startPosition;
-		immutable size_t endPosition;
-		immutable uint id;
+		private const(Lexer) * lexer;
+		size_t startPosition;
+		size_t endPosition;
+		uint id;
 		Comment[] comments;
 
-		dstring code() immutable { return lexer.code[startPosition..endPosition]; }
-		Coordinates startCoordinates() immutable { return lexer.coordinates(startPosition); }
-		Coordinates endCoordinates() immutable { return lexer.coordinates(endPosition); }
+		dstring code() const { return lexer.code[startPosition..endPosition]; }
+		Coordinates startCoordinates() const { return lexer.coordinates(startPosition); }
+		Coordinates endCoordinates() const { return lexer.coordinates(endPosition); }
 
 		enum Type : ubyte {
 			END_OF_FILE,
@@ -71,7 +71,6 @@ struct Lexer {
 		return Token(&this, startPosition, endPosition, id, comments);
 	}
 
-
 	Coordinates coordinates(size_t position) const {
 		return Coordinates("", 0, 0); // TODO
 	}
@@ -90,130 +89,38 @@ struct Lexer {
 
 	private uint lexToken() {
 		uint id = Token.Type.LITERAL;
-		if (chars!`r"` || chars!`x"`) {
-			skipNext!'"';
-		} else if (chars!`q"`) {
-			if (identifierFirstChar) {
-				//auto delimiterStart = position-1;
-				//skipCharsWhile!isIdentifierChar;
-				//auto delimiter = code[delimiterStart .. position];
-				//expectLineBreak;
-				//skipToIdentifierDelimiter(delimiter + `"`);
-			} else if (chars!`(`) {
-				//skipNesting('(', ')', `)"`);
-			} else if (chars!`[`) {
-				//skipNesting('[', ']', `]"`);
-			} else if (chars!`<`) {
-				//skipNesting('<', '>', `>"`);
-			} else if (chars!`{`) {
-				//skipNesting('{', '}', `}"`);
-			} else {
-				//error("unknown delimiter");
-			}
-		} else if (chars!`q{`) {
-			uint depth = 1;
-			while (depth > 0) {
-				auto token = nextToken;
-				if (token.id == Token.idFor("{")) depth++;
-				if (token.id == Token.idFor("}")) depth--;
-			}
-		} else if (identifierFirstChar) {
-			id = Token.Type.IDENTIFIER;
-			auto start = position - 1;
-			skipCharsWhile!isIdentifierChar;
-			auto s = to!string(code[start .. position]);
-			foreach (keyword; sort!"a.length > b.length"(keywords)) {
-				if (s == keyword) {
-					id = Token.idFor(keyword);
-					break;
-				}
-			}
-			// TODO: check for __EOF__ keyword
-		} else if (chars!"`") {
-			skipNext!'`';
-		} else if (chars!`"`) {
-			skipNextWithEscapeSequences!'"';
-		} else if (chars!`'`) {
-			skipNextWithEscapeSequences!'\'';
-		} else if (isDigit(code[position])) {
-			position++;
-			if (code[position-1] == '0') {
-				if ((code[position] == 'b') || (code[position] == 'B')) {
-					position++;
-					skipCharsWhile!isBinaryLiteralDigit;
-					skipCharsWhile!isAlpha;
-					goto end_number_literal;
-				} else if ((code[position] == 'x') || (code[position] == 'X')) {
-					position++;
-					skipCharsWhile!isHexLiteralDigit;
-					if ((code[position] == '.') && (code[position+1] != '.')) {
-						position++;
-						skipCharsWhile!isHexLiteralDigit;
-					}
-					skipCharsWhile!isAlpha;
-					goto end_number_literal;
-				}
-			}
-			skipCharsWhile!isDecimalLiteralDigit;
-			if (code[position] == '.') {
-				position++;
-				skipCharsWhile!isDecimalLiteralDigit;
-			}
-			skipCharsWhile!isAlpha;
-end_number_literal:
-		} else if ((code[position] == '.') && (isDigit(code[position+1]))) {
-			position+=2;
-			skipCharsWhile!isDecimalLiteralDigit;
-			skipCharsWhile!isAlpha;
-		} else if (isEndOfFileChar(code[position])){
-			position++;
-			id = Token.Type.END_OF_FILE;
-		} else {
-			foreach (operator; sort!"a.length > b.length"(operators)) {
-				if ((code.length - position > operator.length) && (to!string(code[position .. position + operator.length]) == operator)) {
-					id = Token.idFor(operator);
-					position += operator.length;
-					break;
-				}
-			}
-		}
+		if (chars!`r"` || chars!`x"`) skipNext!'"'; else
+		if (chars!`q"`) skipDelimitedStringLiteral; else
+		if (chars!`q{`) skipTokenStringLiteral; else
+		if (identifierFirstChar) id = lexKeywordOrIdentifier; else
+		if (chars!"`") skipNext!'`'; else
+		if (chars!`"`) skipNextWithEscapeSequences!'"'; else
+		if (chars!"'") skipNextWithEscapeSequences!'\''; else
+		if (isDigit(code[position])) skipNumberLiteral; else
+		if ((code[position] == '.') && (isDigit(code[position+1]))) skipNumberLiteralThatStartsWithDot; else
+		if (endOfFileChar) id = Token.Type.END_OF_FILE; else
+			id = lexOperator;
 		return id;
 	}
 
-	// if one of strings matches substring of code that starts in curent position
-	//   then advance current position and return true
-	//   else return false
-	private bool chars(string s)() {
-		if ((code.length - position > s.length) && (code[position .. position + s.length] == to!dstring(s))) {
-			position += s.length;
-			return true;
-		} else{
-			return false;
-		}
-	}
-
-	private bool identifierFirstChar() {
-		if (isIdentifierFirstChar(code[position])) {
-			position++;
-			return true;
-		} else {
-			return false;
-		}
-	}
-
-/*
-	private uint lexKeywordOrIdentifier(uint keywordId) {
-		if (isIdentifierChar(code[position])) {
-			skipCharsWhile!isIdentifierChar;
-			return Token.Type.DYNAMIC_TOKEN;
-		} else {
-			return keywordId;
-		}
-	}
-
 	private void skipDelimitedStringLiteral() {
-		// TODO
-		skipNext!'"';
+		if (identifierFirstChar) {
+			//auto delimiterStart = position-1;
+			//skipCharsWhile!isIdentifierChar;
+			//auto delimiter = code[delimiterStart .. position];
+			//expectLineBreak;
+			//skipToIdentifierDelimiter(delimiter + `"`);
+		} else if (chars!`(`) {
+			//skipNesting('(', ')', `)"`);
+		} else if (chars!`[`) {
+			//skipNesting('[', ']', `]"`);
+		} else if (chars!`<`) {
+			//skipNesting('<', '>', `>"`);
+		} else if (chars!`{`) {
+			//skipNesting('{', '}', `}"`);
+		} else {
+			//error("unknown delimiter");
+		}
 	}
 
 	private void skipTokenStringLiteral() {
@@ -225,7 +132,19 @@ end_number_literal:
 		}
 	}
 
+	private uint lexKeywordOrIdentifier() {
+		auto start = position - 1;
+		skipCharsWhile!isIdentifierChar;
+		auto s = to!string(code[start .. position]);
+		foreach (keyword; sort!"a.length > b.length"(keywords)) {
+			if (s == keyword) return Token.idFor(keyword);
+		}
+		return Token.Type.IDENTIFIER;
+		// TODO: check for __EOF__ keyword?
+	}
+
 	private void skipNumberLiteral() {
+		position++;
 		if (code[position-1] == '0') {
 			if ((code[position] == 'b') || (code[position] == 'B')) {
 				position++;
@@ -251,15 +170,51 @@ end_number_literal:
 		skipCharsWhile!isAlpha;
 	}
 
-	private uint lexDecimalFloatLiteralThatStartsWithDotOrOperatorDot() {
-		if (isDigit(code[position])) {
-			skipCharsWhile!isDigit;
-			skipCharsWhile!isAlpha;
-			return Token.Type.DYNAMIC_TOKEN;
-		} else {
-			return Token.idFor(`.`);
+	private void skipNumberLiteralThatStartsWithDot() {
+		position+=2;
+		skipCharsWhile!isDecimalLiteralDigit;
+		skipCharsWhile!isAlpha;
+	}
+
+	private uint lexOperator() {
+		foreach (operator; sort!"a.length > b.length"(operators)) {
+			if ((code.length - position > operator.length) && (to!string(code[position .. position + operator.length]) == operator)) {
+				position += operator.length;
+				return Token.idFor(operator);
+			}
 		}
-	}*/
+		return 0;  // FIXME
+	}
+
+	// if one of strings matches substring of code that starts in curent position
+	//   then advance current position and return true
+	//   else return false
+	private bool chars(string s)() {
+		if ((code.length - position > s.length) && (code[position .. position + s.length] == to!dstring(s))) {
+			position += s.length;
+			return true;
+		} else{
+			return false;
+		}
+	}
+
+	private bool identifierFirstChar() {
+		if (isIdentifierFirstChar(code[position])) {
+			position++;
+			return true;
+		} else {
+			return false;
+		}
+	}
+
+	private bool endOfFileChar() {
+		if (isEndOfFileChar(code[position])) {
+			position++;
+			return true;
+		} else {
+			return false;
+		}
+	}
 
 	private Comment[] lexCommentsAndSkipWhitespaceAndLineBreaks() {
 		//switch (code[position++]) {
@@ -582,4 +537,15 @@ unittest {
 	test("Literals / Float / Hexadecimal       ", hexFloatLiterals);
 //test("Literals / Float / Imaginary         ", imaginaryFloatLiterals);
 	test("Keywords and operators               ", staticTokens);
+}
+
+
+
+
+unittest {
+	import std.file;
+	auto lexer = Lexer(to!dstring(readText!string("lexer4.d")));
+	for (Lexer.Token t = lexer.nextToken; t.id != Lexer.Token.Type.END_OF_FILE; t = lexer.nextToken) {
+		writeln(t.code);
+	}
 }
